@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.17)
+project(tiny-frpc)
+
+file(GLOB SRC_LIST "*/*.h" "*/*.c")
+include_directories("core" "hal" "third-party")
+
+add_executable(tiny-frpc ${SRC_LIST})
