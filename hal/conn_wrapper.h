@@ -2,10 +2,10 @@
 #define TINY_FRPC_CONN_WRAPPER_H
 
 int frpc_hal_get_tick();
-int frpc_hal_create_tcp();
-int frpc_hal_tcp_write(int handle, unsigned char *buf, int size);
-int frpc_hal_tcp_read(int handle, unsigned char *buf, int size, int timeout_ms);
-int frpc_hal_tcp_close(int handle);
+int frpc_hal_create_tcp(char* ip, int port);
+int frpc_hal_tcp_write(int handle, char *buf, int size);
+int frpc_hal_tcp_read(int handle, char *buf, int size, int timeout_ms);
+void frpc_hal_tcp_close(int handle);
 
 
 #define FRPC_LOG_LEVEL_ERROR 0

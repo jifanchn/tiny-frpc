@@ -7,6 +7,7 @@
 
 void frpc_init(frpc_tcp_handle* h){
     yamux_init(&h->mux);
+    h->admin_stream = -1;
 }
 
 int frpc_login(frpc_tcp_handle* h){
@@ -14,7 +15,7 @@ int frpc_login(frpc_tcp_handle* h){
 }
 
 int frpc_send_config(frpc_tcp_handle *h){
-    if (h->admin_session < 0){
+    if (h->admin_stream < 0){
 
     }
     return 0;
@@ -22,6 +23,14 @@ int frpc_send_config(frpc_tcp_handle *h){
 
 int frpc_ping(frpc_tcp_handle* h){
    return 0;
+}
+
+void frpc_admin_func(frpc_tcp_handle* h){
+
+}
+
+void frpc_proxy_func(frpc_tcp_handle* h){
+
 }
 
 void frpc_loop(frpc_tcp_handle* h){
@@ -32,13 +41,13 @@ void frpc_loop(frpc_tcp_handle* h){
     frpc_init(h);
 
     result = yamux_create_tcp(&h->mux, h->frps_ip, h->frps_port);
-    if (result < 0){
+    if (result <= 0){
         frpc_log(FRPC_LOG_LEVEL_ERROR, "yamux create tcp failed.");
         return;
     }
 
-    h->admin_session = yamux_create_session(&h->mux);
-    if (h->admin_session < 0){
+    h->admin_stream = yamux_create_stream(&h->mux);
+    if (h->admin_stream < 0){
         frpc_log(FRPC_LOG_LEVEL_ERROR, "yamux create admin session failed.");
         return;
     }
@@ -75,7 +84,12 @@ void frpc_loop(frpc_tcp_handle* h){
         if (result < 0){
             h->end_time = frpc_hal_get_tick();
             continue;
+        }else if (result > 0){
+            if (h->mux.receive_header.stream_id == h->admin_stream){
+                frpc_admin_func(h);
+            }else{
+                frpc_proxy_func(h);
+            }
         }
-        h->timeout = FRPC_IDLE_TIMEOUT;
     }
 }

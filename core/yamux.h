@@ -27,8 +27,8 @@
 #define YAMUX_GOAWAY_INTERNAL_ERROR (2)
 
 typedef struct s_yamux_header {
-    unsigned char version;              // byte 0
-    unsigned char type;                 // byte 1
+    char version;              // byte 0
+    char type;                 // byte 1
     unsigned short flags;               // byte 2,3
     unsigned int stream_id;             // byte 4,5,6,7
     unsigned int data_len;              // byte 8,9,10,11
@@ -44,16 +44,16 @@ typedef struct s_yamux {
     int sessions[YAMUX_MAX_SESSIONS];
 } yamux;
 
-void yamux_header_pack(unsigned char*, yamux_header*);
-void yamux_header_unpack(yamux_header*, unsigned char*);
+void yamux_header_pack(char*, yamux_header*);
+void yamux_header_unpack(yamux_header*, char*);
 
 void yamux_init(yamux* h);
 int yamux_create_tcp(yamux* h, char* ip, int port);
-int yamux_create_session(yamux* h);
-int yamux_destory_session(yamux* h, int s);
+int yamux_create_stream(yamux* h);
+int yamux_destory_stream(yamux* h, int s);
 int yamux_destory_tcp(yamux* h);
 
-int yamux_tick(yamux* h, unsigned char* buf, int buf_size, int timeout);
-int yamux_session_send(yamux* h, int session, unsigned char* buf, int len);
+int yamux_tick(yamux* h, char* buf, int buf_size, int timeout);
+int yamux_stream_send(yamux* h, int session, char* buf, int len);
 
 #endif //TINY_FRPC_YAMUX_H

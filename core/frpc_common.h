@@ -15,15 +15,15 @@
 #define FRPC_PING_TIMEOUT (30000)
 
 typedef struct s_frpc_tcp_handle {
-    unsigned char read_buf[FRPC_TCP_READ_BUF_LEN];
-    unsigned char write_buf[FRPC_TCP_WRITE_BUF_LEN];
+    char read_buf[FRPC_TCP_READ_BUF_LEN];
+    char write_buf[FRPC_TCP_WRITE_BUF_LEN];
 
     yamux mux;
     char frps_ip[32];
     int frps_port;
     char mux_domain_name[FRPC_DOMAIN_NAME_LEN];
 
-    int admin_session;
+    int admin_stream;
     int timeout;
     int ping_timeout;
     unsigned short start_time;
