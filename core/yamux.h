@@ -5,7 +5,9 @@
 #ifndef TINY_FRPC_YAMUX_H
 #define TINY_FRPC_YAMUX_H
 
-#define YAMUX_MAX_SESSIONS 5
+#define YAMUX_MAX_STREAMS 5
+#define YAMUX_PING_TIMEOUT 5000
+#define YAMUX_PING_ALIVE_TIMEOUT 30000
 
 #define YAMUX_HEADER_SIZE (12)
 #define YAMUX_VERSION (0)
@@ -27,8 +29,8 @@
 #define YAMUX_GOAWAY_INTERNAL_ERROR (2)
 
 typedef struct s_yamux_header {
-    char version;              // byte 0
-    char type;                 // byte 1
+    char version;                       // byte 0
+    char type;                          // byte 1
     unsigned short flags;               // byte 2,3
     unsigned int stream_id;             // byte 4,5,6,7
     unsigned int data_len;              // byte 8,9,10,11
@@ -41,7 +43,13 @@ typedef struct s_yamux {
     int streams;
     yamux_header receive_header, send_header;
 
-    int sessions[YAMUX_MAX_SESSIONS];
+    int ping_timeout;
+    unsigned short start_time;
+    unsigned short end_time;
+    unsigned short time_delta;
+
+    int stream_list[YAMUX_MAX_STREAMS];
+    int stream_alive[YAMUX_MAX_STREAMS];
 } yamux;
 
 void yamux_header_pack(char*, yamux_header*);
@@ -49,8 +57,8 @@ void yamux_header_unpack(yamux_header*, char*);
 
 void yamux_init(yamux* h);
 int yamux_create_tcp(yamux* h, char* ip, int port);
-int yamux_create_stream(yamux* h);
-int yamux_destory_stream(yamux* h, int s);
+int yamux_create_stream(yamux* h, char* buf);
+int yamux_destory_stream(yamux* h, int s, char* buf);
 int yamux_destory_tcp(yamux* h);
 
 int yamux_tick(yamux* h, char* buf, int buf_size, int timeout);

@@ -2,8 +2,8 @@
 // Created by JiFan on 2020/12/6.
 //
 
-#ifndef TINY_FRPC_FRPC_COMMON_H
-#define TINY_FRPC_FRPC_COMMON_H
+#ifndef TINY_FRPC_FRPC_H
+#define TINY_FRPC_FRPC_H
 
 #include "yamux.h"
 
@@ -34,4 +34,4 @@ typedef struct s_frpc_tcp_handle {
 
 void frpc_loop(frpc_tcp_handle*);
 
-#endif //TINY_FRPC_FRPC_COMMON_H
+#endif //TINY_FRPC_FRPC_H
