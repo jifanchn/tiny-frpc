@@ -16,5 +16,6 @@ void frpc_hal_tcp_close(int handle);
 #define FRPC_LOG_LEVEL 0
 void frpc_log(unsigned char, char*);
 void frpc_log_with_int(unsigned char, char*, int);
+void frpc_log_char(unsigned char, char*, char*, int len);
 
 #endif //TINY_FRPC_WRAPPER_H

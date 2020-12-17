@@ -44,7 +44,8 @@ int frpc_hal_tcp_write(int h, char *buf, int size, int timeout_ms){
     struct timeval tv;
     tv.tv_sec = timeout_ms/1000;
     tv.tv_usec = (timeout_ms%1000)*1000;
-    setsockopt(h, SOL_SOCKET, SO_RCVTIMEO, (char *)&tv, sizeof tv);
+    setsockopt(h, SOL_SOCKET, SO_SNDTIMEO, (char *)&tv, sizeof tv);
+    frpc_log_char(FRPC_LOG_LEVEL_DEBUG, "tcp send raw", buf, size);
     if (send(h, buf, size, 0) != size) {
         close(h);
         return 0;
@@ -59,9 +60,9 @@ int frpc_hal_tcp_read(int h, char *buf, int size, int timeout_ms){
     setsockopt(h, SOL_SOCKET, SO_RCVTIMEO, (char *)&tv, sizeof tv);
     int bytes_recv = recv(h, buf, size - 1, 0);
     if (bytes_recv < 0 ){
-        close(h);
         return 0;
     }
+    frpc_log_char(FRPC_LOG_LEVEL_DEBUG, "tcp receive raw", buf, bytes_recv);
     return bytes_recv;
 };
 
@@ -72,11 +73,24 @@ void frpc_hal_tcp_close(int h){
 void frpc_log(unsigned char level, char* s){
     if (level >= FRPC_LOG_LEVEL){
         printf("%s\n", s);
+        fflush(stdout);
     }
 }
 
 void frpc_log_with_int(unsigned char level, char* s, int num){
     if (level >= FRPC_LOG_LEVEL){
-        printf("%s, %d\n", s, num);
+        printf("%s: %d\n", s, num);
+        fflush(stdout);
+    }
+}
+
+void frpc_log_char(unsigned char level, char* s, char* data, int len){
+    if (level >= FRPC_LOG_LEVEL){
+        printf("%s: ", s);
+        for (int i=0; i<len; i++){
+            printf("%d ", data[i]);
+        }
+        printf("\n");
+        fflush(stdout);
     }
 }

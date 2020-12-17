@@ -34,8 +34,6 @@ void frpc_proxy_func(frpc_tcp_handle* h){
 }
 
 void frpc_loop(frpc_tcp_handle* h){
-    char tcp_read_buf[FRPC_TCP_READ_BUF_LEN];
-    char tcp_write_buf[FRPC_TCP_WRITE_BUF_LEN];
     int result;
 
     frpc_init(h);
@@ -46,7 +44,7 @@ void frpc_loop(frpc_tcp_handle* h){
         return;
     }
 
-    h->admin_stream = yamux_create_stream(&h->mux, tcp_write_buf);
+    h->admin_stream = yamux_create_stream(&h->mux, h->write_buf);
     if (h->admin_stream < 0){
         frpc_log(FRPC_LOG_LEVEL_ERROR, "yamux create admin session failed.");
         return;
@@ -80,7 +78,8 @@ void frpc_loop(frpc_tcp_handle* h){
             continue;
         }
 
-        result = yamux_tick(&h->mux, h->read_buf, FRPC_TCP_READ_BUF_LEN, FRPC_TCP_READ_TIMEOUT);
+        int data_start;
+        result = yamux_tick(&h->mux, h->read_buf, FRPC_TCP_READ_BUF_LEN, &data_start, h->write_buf, FRPC_TCP_WRITE_BUF_LEN, FRPC_TCP_READ_TIMEOUT);
         if (result < 0){
             h->end_time = frpc_hal_get_tick();
             continue;
