@@ -5,4 +5,3 @@ file(GLOB SRC_LIST "core/*.h" "core/*.c" "hal/*.h" "hal/*.c" "third-party/*/*.h"
 include_directories("core" "hal" "third-party")
 
 add_executable(yamux_test ${SRC_LIST} "test/yamux_test.c")
-add_executable(hmac_test ${SRC_LIST} "test/hmac_test.c")

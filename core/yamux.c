@@ -25,11 +25,11 @@ void yamux_header_pack(char* s, yamux_header* h){
 void yamux_header_unpack(yamux_header* h, char* s){
     h->version = s[0];
     h->type = s[1];
-    h->flags = (((unsigned short)s[2]) << 8) | ((unsigned short)s[3]);
-    h->stream_id = (((unsigned int)s[4]) << 24) | (((unsigned int)s[5]) << 16) |
-            (((unsigned int)s[6] << 8)) | ((unsigned int)s[7]);
-    h->data_len = (((unsigned int)s[8]) << 24) | (((unsigned int)s[9]) << 16) |
-                   (((unsigned int)s[10]) << 8) | (((unsigned int)s[11]));
+    h->flags = (((unsigned short)(unsigned char)s[2]) << 8) | ((unsigned short)(unsigned char)s[3]);
+    h->stream_id = (((unsigned int)(unsigned char)s[4]) << 24) | (((unsigned int)(unsigned char)s[5]) << 16) |
+            (((unsigned int)(unsigned char)s[6] << 8)) | ((unsigned int)(unsigned char)s[7]);
+    h->data_len = (((unsigned int)(unsigned char)s[8]) << 24) | (((unsigned int)(unsigned char)s[9]) << 16) |
+                   (((unsigned int)(unsigned char)s[10]) << 8) | (((unsigned int)(unsigned char)s[11]));
 }
 
 void yamux_header_log(yamux_header* h){
