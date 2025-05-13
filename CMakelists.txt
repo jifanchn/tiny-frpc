@@ -1,7 +1,0 @@
-cmake_minimum_required(VERSION 3.10)
-project(tiny-frpc)
-
-file(GLOB SRC_LIST "core/*.h" "core/*.c" "hal/*.h" "hal/*.c" "third-party/*/*.h" "third-party/*/*.c")
-include_directories("core" "hal" "third-party")
-
-add_executable(yamux_test ${SRC_LIST} "test/yamux_test.c")
