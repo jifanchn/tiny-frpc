@@ -1,0 +1,6 @@
+[submodule "third-party/frp"]
+	path = third-party/frp
+	url = https://github.com/fatedier/frp
+[submodule "third-party/yamux"]
+	path = third-party/yamux
+	url = https://github.com/fatedier/yamux
