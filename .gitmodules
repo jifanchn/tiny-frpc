@@ -1,0 +1,6 @@
+[submodule "externals/tiny-yamux"]
+	path = externals/tiny-yamux
+	url = https://github.com/jifanchn/tiny-yamux
+[submodule "externals/frp"]
+	path = externals/frp
+	url = https://github.com/fatedier/frp

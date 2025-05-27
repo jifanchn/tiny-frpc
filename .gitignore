@@ -1,0 +1,96 @@
+# Prerequisites
+*.d
+
+# Object files
+*.o
+*.ko
+*.obj
+*.elf
+
+# Linker output
+*.ilk
+*.map
+*.exp
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Libraries
+*.lib
+*.a
+*.la
+*.lo
+
+# Shared objects (inc. Windows DLLs)
+*.dll
+*.so
+*.so.*
+*.dylib
+
+# Executables
+*.exe
+*.out
+*.app
+*.i*86
+*.x86_64
+*.hex
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# Kernel Module Compile Results
+*.cmd
+.tmp_versions/
+modules.order
+Module.symvers
+Mkfile.old
+dkms.conf
+
+*.bak
+
+# Build directories
+build/
+
+# Specific binaries
+tests/cgo_tests/cgo_tests_new
+
+tests/cgo_tests/frpc_test
+
+# Test backup directories
+tests/cgo_tests_backup*/
+
+# Go specific
+*.sum
+
+# cgo_tests specific
+# Compiled binaries
+*.test
+*.prof
+*.out
+
+# Build artifacts
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+
+# IDE specific
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
