@@ -6,14 +6,17 @@
  * Provides platform abstraction using Winsock2 and Windows CRT
  */
 
-#define _WIN32_WINNT 0x0600  /* Windows Vista+ for getaddrinfo */
+/* Ensure Windows Vista+ APIs are available (for getaddrinfo) */
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0600
+#endif
+
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
 #include <time.h>
 
-/* Link with Winsock library */
-#pragma comment(lib, "ws2_32.lib")
+/* Note: Link with ws2_32.lib (-lws2_32 for mingw) */
 
 /* Errno-related wrapper constants (mapped to Winsock errors) */
 #define WRAPPED_EINTR      WSAEINTR
