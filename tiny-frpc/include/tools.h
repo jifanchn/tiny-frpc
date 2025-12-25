@@ -1,42 +1,65 @@
 /**
  * @file tools.h
- * @brief 轻量级工具函数，适用于嵌入式环境
+ * @brief Lightweight utility helpers for embedded-friendly environments
  */
 #ifndef TINY_FRPC_TOOLS_H
 #define TINY_FRPC_TOOLS_H
 
 #include <stdint.h>
+#include <stddef.h>
 
 /**
- * @brief 字节序转换函数 - 主机序到网络序(32位)
+ * @brief Byte-order conversion: host to network (32-bit)
  */
 uint32_t tools_htonl(uint32_t hostlong);
 
 /**
- * @brief 字节序转换函数 - 主机序到网络序(16位)
+ * @brief Byte-order conversion: host to network (16-bit)
  */
 uint16_t tools_htons(uint16_t hostshort);
 
 /**
- * @brief 字节序转换函数 - 网络序到主机序(32位)
+ * @brief Byte-order conversion: network to host (32-bit)
  */
 uint32_t tools_ntohl(uint32_t netlong);
 
 /**
- * @brief 字节序转换函数 - 网络序到主机序(16位)
+ * @brief Byte-order conversion: network to host (16-bit)
  */
 uint16_t tools_ntohs(uint16_t netshort);
 
 /**
- * @brief 获取当前时间戳(毫秒)
- * 不同平台需要特定实现
+ * @brief Get current timestamp (milliseconds)
+ * Platform-specific implementation may be required.
  */
 uint64_t tools_get_time_ms(void);
 
 /**
- * @brief 初始化工具库
- * 用于初始化可能需要的内部状态
+ * @brief Initialize the tools module.
+ * Used to initialize internal state if needed.
  */
 void tools_init(void);
+
+/**
+ * @brief Compute MD5 and output a 32-byte lowercase hex string (NUL-terminated)
+ *
+ * @param data Input bytes
+ * @param len  Input length
+ * @param out_hex Output buffer, at least 33 bytes
+ * @return 0 on success, <0 on failure
+ */
+int tools_md5_hex(const uint8_t* data, size_t len, char out_hex[33]);
+
+/**
+ * @brief Compute FRP auth key (equivalent to Go: util.GetAuthKey(token, timestamp))
+ *
+ * Computes MD5(token + strconv.FormatInt(timestamp, 10)) and outputs lowercase hex.
+ *
+ * @param token Auth token (or STCP secret key)
+ * @param timestamp Unix timestamp (seconds)
+ * @param out_hex Output buffer, at least 33 bytes
+ * @return 0 on success, <0 on failure
+ */
+int tools_get_auth_key(const char* token, int64_t timestamp, char out_hex[33]);
 
 #endif /* TINY_FRPC_TOOLS_H */ 

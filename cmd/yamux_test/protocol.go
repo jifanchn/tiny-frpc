@@ -1,3 +1,6 @@
+//go:build yamux_protocol
+// +build yamux_protocol
+
 package main
 
 /*
@@ -68,42 +71,35 @@ static yamux_session_t* create_protocol_test_session(bool is_client) {
 // 测试PING功能
 static int test_ping(yamux_session_t* session) {
     ping_received = 0;
+    test_buffer_pos = 0;
     
-    // 等待一段时间让keepalive生效
+    // 触发一次 tick 让会话发送 PING（keepalive_interval_ms=100ms）
     usleep(200000); // 200ms
-    
-    // 手动构造和发送ping帧
-    uint8_t ping_frame[16] = {0};
-    ping_frame[0] = YAMUX_VERSION;    // Version
-    ping_frame[1] = YAMUX_TYPE_PING;  // Type = PING
-    ping_frame[2] = 0;                // Flags高字节
-    ping_frame[3] = 0;                // Flags低字节 (0表示请求，ACK表示响应)
-    
-    // 设置流ID为0 (PING帧使用StreamID 0)
-    ping_frame[4] = 0;
-    ping_frame[5] = 0;
-    ping_frame[6] = 0;
-    ping_frame[7] = 0;
-    
-    // 设置长度为4字节 (PING值)
-    ping_frame[8] = 0;
-    ping_frame[9] = 0;
-    ping_frame[10] = 0;
-    ping_frame[11] = 4;
-    
-    // PING负载值 (简单的递增数字)
-    uint32_t ping_value = 12345;
-    ping_frame[12] = (ping_value >> 24) & 0xFF;
-    ping_frame[13] = (ping_value >> 16) & 0xFF;
-    ping_frame[14] = (ping_value >> 8) & 0xFF;
-    ping_frame[15] = ping_value & 0xFF;
-    
-    // 调用session的write回调函数发送ping帧
-    protocol_write_callback(NULL, ping_frame, 16);
-    
-    usleep(200000); // 等待200ms，确保有足够时间接收到PONG回复
-    
-    return ping_received > 0 ? 0 : -1;
+    yamux_session_tick(session);
+    usleep(20000);
+
+    // 严格检查：必须至少写出一个 PING 帧
+    if (ping_received <= 0) {
+        return -1;
+    }
+    // 对齐 third-party/yamux：PING 不携带 payload，因此至少应写出 12 字节（header）
+    if (test_buffer_pos < 12) {
+        return -1;
+    }
+    // Type
+    if (test_buffer[1] != YAMUX_TYPE_PING) {
+        return -1;
+    }
+    // StreamID 必须为 0
+    if (test_buffer[4] != 0 || test_buffer[5] != 0 || test_buffer[6] != 0 || test_buffer[7] != 0) {
+        return -1;
+    }
+    // Flags 必须包含 SYN（请求 ping）
+    uint16_t flags = (uint16_t)((test_buffer[2] << 8) | test_buffer[3]);
+    if ((flags & YAMUX_FLAG_SYN) == 0) {
+        return -1;
+    }
+    return 0;
 }
 
 // 测试流控制
@@ -167,6 +163,10 @@ static int test_flow_control(yamux_session_t* session) {
     // 通过yamux_session_receive处理帧
     int process_result = yamux_session_receive(session, window_update_frame, sizeof(window_update_frame));
     printf("处理窗口更新帧结果: %d\n", process_result);
+    if (process_result != (int)sizeof(window_update_frame)) {
+        printf("窗口更新帧未被完整消费: %d/%zu\n", process_result, sizeof(window_update_frame));
+        return -1;
+    }
     
     // 主动更新远程窗口
     int update_result = yamux_stream_window_update(session, stream_id, 1024 * 1024);
@@ -184,6 +184,7 @@ static int test_flow_control(yamux_session_t* session) {
 // 测试GOAWAY
 static int test_goaway(yamux_session_t* session) {
     goaway_received = 0;
+    test_buffer_pos = 0;
     
     // 使用yamux_session_close替代yamux_session_shutdown
     int result = yamux_session_close(session);
@@ -192,8 +193,25 @@ static int test_goaway(yamux_session_t* session) {
     }
     
     usleep(100000); // 等待100ms
-    
-    return goaway_received > 0 ? 0 : -1;
+    if (goaway_received <= 0) {
+        return -1;
+    }
+    // 对齐 third-party/yamux：GOAWAY 不携带 payload，因此至少应写出 12 字节（header）
+    if (test_buffer_pos < 12) {
+        return -1;
+    }
+    if (test_buffer[1] != YAMUX_TYPE_GO_AWAY) {
+        return -1;
+    }
+    // StreamID 必须为 0
+    if (test_buffer[4] != 0 || test_buffer[5] != 0 || test_buffer[6] != 0 || test_buffer[7] != 0) {
+        return -1;
+    }
+    // length 字段应为 error code（正常关闭 = 0）
+    if (test_buffer[8] != 0 || test_buffer[9] != 0 || test_buffer[10] != 0 || test_buffer[11] != 0) {
+        return -1;
+    }
+    return 0;
 }
 */
 import "C"
@@ -265,6 +283,9 @@ func testGoaway() bool {
 }
 
 func main() {
+    // Ensure LLVM coverage profile is flushed (only active with -tags=covflush).
+    defer flushCoverage()
+
     fmt.Println("开始运行yamux协议特性测试套件...")
     
     success := true

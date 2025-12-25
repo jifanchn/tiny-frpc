@@ -1,3 +1,6 @@
+//go:build yamux_basic
+// +build yamux_basic
+
 package main
 
 /*
@@ -10,9 +13,6 @@ package main
 #include <stdio.h>
 #include <unistd.h>  // 添加unistd.h以支持usleep
 #include "yamux.h"
-
-// 定义错误码，确保与yamux.h中一致
-#define YAMUX_ERR_WINDOW -6
 
 // 全局变量用于测试回调
 static uint8_t test_buffer[65536];
@@ -67,9 +67,19 @@ static void on_stream_closed(void* stream_user_data, bool by_remote, uint32_t er
 }
 
 // 新流回调
-static bool on_new_stream(void* session_ctx, uint32_t stream_id, void** stream_user_data) {
+static int on_new_stream(void* session_user_data, yamux_stream_t** p_stream, void** p_stream_user_data_out) {
+    (void)session_user_data;
+    if (p_stream == NULL || *p_stream == NULL) {
+        return 0; // reject
+    }
+
+    uint32_t stream_id = yamux_stream_get_id(*p_stream);
     printf("New stream request, id=%u\n", stream_id);
-    return true;
+
+    if (p_stream_user_data_out) {
+        *p_stream_user_data_out = NULL;
+    }
+    return 1; // accept
 }
 
 // 创建测试会话
@@ -164,7 +174,11 @@ static int test_stream_operations(yamux_session_t* session) {
     // 关闭流
     yamux_stream_close(session, stream_id, 0);
     
-    // 无论如何都返回成功，因为这只是测试
+    // 严格：必须发送成功
+    if (total_sent != (int)data_len) {
+        printf("未能发送全部数据，总计: %d/%zu\n", total_sent, data_len);
+        return -1;
+    }
     return 0;
 }
 */
@@ -239,6 +253,9 @@ func testSessionConfig() bool {
 }
 
 func main() {
+    // Ensure LLVM coverage profile is flushed (only active with -tags=covflush).
+    defer flushCoverage()
+
     fmt.Println("开始运行yamux基础测试套件...")
     
     success := true

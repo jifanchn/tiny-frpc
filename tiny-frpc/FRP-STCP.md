@@ -1,152 +1,67 @@
-# FRP STCP 协议概述
+# FRP STCP notes (source-of-truth: `third-party/frp`)
 
-## 什么是STCP (Secret TCP)
+This document captures the STCP (Secret TCP) flow as implemented in upstream FRP.
+If anything here conflicts with upstream source code, upstream wins.
 
-STCP是FRP中的一种代理类型，它允许将TCP流量转发到内网服务器，同时提供了一种通过密钥进行连接验证的安全机制。STCP由两个关键组件组成：Visitor和Server。
+## What is STCP?
 
-## STCP工作原理
+STCP is a proxy type in FRP that forwards TCP traffic to an internal service and adds a shared-secret-based authentication step.
+There are two roles:
 
-1. **Server组件**：
-   - 在内网中运行，连接到FRP服务器(frps)
-   - 注册一个STCP代理，并提供一个密钥(key)
-   - 等待来自Visitor的连接
+- **STCP Proxy (server-side)**: runs inside the private network and registers itself to `frps` as a `stcp` proxy.
+- **STCP Visitor (client-side)**: runs where it can reach `frps`, and requests a connection to the `stcp` proxy by presenting a signature derived from the shared secret.
 
-2. **Visitor组件**：
-   - 可以在任何能够访问frps的地方运行
-   - 连接到FRP服务器(frps)
-   - 使用相同的密钥请求连接到特定的STCP服务
-   - 通过frps中转与内网Server建立连接
+## High-level flow
 
-3. **通信流程**：
-   - Visitor → frps：请求连接到特定的STCP服务并提供密钥
-   - frps验证密钥并找到对应的Server
-   - frps在Visitor和Server之间建立连接通道
-   - Visitor和Server开始直接通信（通过frps中转）
+### 1) STCP Proxy registers to frps
 
-4. **详细通信过程**：
-   - **Server端初始化**：
-     - 连接到frps (TCP连接)
-     - 发送Login消息进行身份认证
-     - 接收LoginResp响应
-     - 发送NewProxy消息注册STCP服务
-     - 接收NewProxyResp响应
-     - 等待frps的连接请求
+The proxy connects to `frps`, authenticates via `Login/LoginResp`, then registers the proxy via `NewProxy/NewProxyResp`.
 
-   - **Visitor端请求连接**：
-     - 连接到frps (TCP连接)
-     - 创建新的visitor连接
-     - 发送NewVisitorConn消息，包含:
-       - RunID (客户端唯一标识)
-       - ProxyName (目标服务名称)
-       - SignKey (使用密钥生成的签名)
-       - Timestamp (时间戳，用于防重放)
-       - UseEncryption (是否加密)
-       - UseCompression (是否压缩)
-     - 接收NewVisitorConnResp响应
-     - 如果成功，建立与Server的数据通道
+Relevant upstream types:
 
-   - **frps服务器处理**：
-     - 接收Visitor的连接请求
-     - 验证SignKey (使用密钥和时间戳)
-     - 查找对应的Server代理
-     - 与Server建立工作连接
-     - 将Visitor连接与Server工作连接关联
-     - 返回成功响应给Visitor
+- `msg.Login`, `msg.LoginResp`
+- `msg.NewProxy`, `msg.NewProxyResp`
 
-   - **数据传输**：
-     - 建立连接后，数据通过frps在Visitor和Server之间透明传输
-     - 如果启用加密，数据将在传输前加密
-     - 如果启用压缩，数据将在传输前压缩
+### 2) STCP Visitor requests a connection
 
-## Yamux在STCP中的作用
+For each incoming user connection, the visitor establishes a fresh connection to `frps` (called “visitorConn” in upstream) and sends `NewVisitorConn`:
 
-FRP使用Yamux协议来多路复用底层TCP连接，使得多个应用流量能共享同一个TCP连接，从而提高效率和性能。
+- `RunID`: the frpc run_id allocated by frps at login
+- `ProxyName`: the *server* name (the STCP proxy name)
+- `SignKey`: `util.GetAuthKey(secretKey, timestamp)`
+- `Timestamp`: `time.Now().Unix()`
+- `UseEncryption`, `UseCompression`: transport options
 
-1. **连接复用**：
-   - 使用Yamux建立多路复用会话
-   - 在单个TCP连接上创建多个逻辑流
-   - 每个应用连接映射到一个Yamux流
+Then it waits for `NewVisitorConnResp`. If no error, traffic is forwarded over that connection, optionally wrapped with encryption/compression.
 
-2. **Yamux会话建立**：
-   - 服务端和客户端建立TCP连接
-   - 使用fmux.Server或fmux.Client初始化Yamux会话
-   - 会话配置包括：
-     - KeepAliveInterval (保活间隔)
-     - MaxStreamWindowSize (流窗口大小)
-     - 等其他参数
+Upstream reference: `client/visitor/stcp.go`
 
-3. **流操作**：
-   - 服务端通过session.AcceptStream()接受新流
-   - 客户端通过session.OpenStream()创建新流
-   - 每个流作为独立的连接处理
+## Auth key derivation (critical)
 
-## 需要实现的组件
+Upstream computes the signature as:
 
-1. **STCP Visitor**：
-   - 连接到frps
-   - 认证和协商
-   - 建立数据通道
-   - 处理数据传输
-   - 管理连接生命周期
+- `util.GetAuthKey(tokenOrSecretKey, timestamp)` = `md5(token + strconv.FormatInt(timestamp, 10))` in lowercase hex.
 
-2. **STCP Server**：
-   - 连接到frps
-   - 注册STCP服务
-   - 接受来自Visitor的连接请求
-   - 处理数据传输
-   - 管理连接生命周期
+In this repository, the equivalent helper is exposed as `tools_get_auth_key()` in `tiny-frpc/include/tools.h`.
 
-## 实现注意事项
+## TCPMux / “invalid protocol version” note
 
-1. **认证安全**：
-   - 正确实现密钥验证机制
-   - 使用util.GetAuthKey()生成签名
-   - 验证时间戳防止重放攻击
+Upstream `frps` enables `Transport.TCPMux=true` by default, which means the control connection is treated as a mux session.
+If the client does not speak the expected mux protocol on that connection, frps may log errors like:
 
-2. **连接管理**：
-   - 妥善处理连接的建立和关闭
-   - 实现心跳机制保持连接活跃
-   - 处理异常情况和错误恢复
+- `accept new mux stream error: invalid protocol version`
 
-3. **数据处理**：
-   - 高效的数据传输和缓冲
-   - 正确处理加密和压缩
-   - 处理分包和粘包问题
+For staged bring-up, `cmd/frpc_test` may temporarily disable TCPMux in the embedded frps config. The long-term goal is strict alignment with TCPMux enabled.
 
-4. **资源管理**：
-   - 避免内存泄漏
-   - 及时关闭不再使用的连接
-   - 限制最大连接数和资源使用
+## Upstream files worth reading
 
-## 消息格式
+- `client/visitor/stcp.go`
+- `server/visitor/visitor.go` (auth verification + allow-users)
+- `pkg/msg/msg.go` (message schema)
+- `pkg/util/util/util.go` (`GetAuthKey`)
 
-1. **NewVisitorConn** (Visitor->frps):
-   ```
-   {
-     "run_id": "visitor客户端ID",
-     "proxy_name": "目标服务名称",
-     "sign_key": "基于密钥和时间戳的签名",
-     "timestamp": 当前时间戳,
-     "use_encryption": true/false,
-     "use_compression": true/false
-   }
-   ```
+## tiny-frpc implementation notes (demo/testing)
 
-2. **NewVisitorConnResp** (frps->Visitor):
-   ```
-   {
-     "proxy_name": "目标服务名称",
-     "error": "错误信息(如果有)"
-   }
-   ```
-
-## 相关代码分析
-
-在实现过程中，需要参考FRP源代码中以下关键文件：
-
-1. `client/visitor/visitor.go` - 访问者基础实现
-2. `client/visitor/stcp.go` - STCP访问者具体实现
-3. `server/proxy/stcp.go` - 服务器端STCP代理实现
-4. `server/visitor/visitor.go` - 服务器端访问者管理
-5. `pkg/msg/msg.go` - 消息定义
-6. `pkg/util/util.go` - 工具函数，包括认证等 
+- In `demo/stcp/`, the data-plane is a direct TCP connection carrying **Yamux frames** (for local debugging only).
+- For a server-side accepted Yamux stream, the server does **not** receive an ACK (it sends the ACK to the client).
+  - Therefore, sending data back should be gated by **stream existence** (`active_stream_id != 0`) rather than waiting for an ACK-driven "established" callback on the server side.

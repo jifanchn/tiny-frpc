@@ -1,16 +1,18 @@
 #include "../include/yamux.h"
 #include "../include/tools.h"
 
-// 前向声明
+// Forward declarations
 static int handleWindowUpdate(struct yamux_session* s, yamux_frame_header_t* hdr, uint16_t flags);
 static int processStreamFlags(struct yamux_session* s, struct yamux_stream* stream, uint16_t flags);
 
-/* 配置选项 */
-/* 定义YAMUX_DEBUG开启调试输出，嵌入式环境通常关闭 */
-#define YAMUX_DEBUG  // FORCE ENABLE FOR INTEROP TEST DEBUGGING
+/* Configuration */
+/* Define YAMUX_DEBUG to enable debug logs (usually off on embedded targets). */
+#ifdef DEBUG_LOG
+#define YAMUX_DEBUG
+#endif
 
 #ifdef YAMUX_DEBUG
-#include <stdio.h> /* 仅调试模式使用 */
+#include <stdio.h> /* debug-only */
 #define YAMUX_LOG(fmt, ...) do { printf("Yamux: " fmt "\n", ##__VA_ARGS__); fflush(stdout); } while (0)
 #define YAMUX_ERROR(fmt, ...) do { fprintf(stderr, "Yamux Error: " fmt "\n", ##__VA_ARGS__); fflush(stderr); } while (0)
 #define YAMUX_WARN(fmt, ...) do { fprintf(stderr, "Yamux Warn: " fmt "\n", ##__VA_ARGS__); fflush(stderr); } while (0)
@@ -20,29 +22,16 @@ static int processStreamFlags(struct yamux_session* s, struct yamux_stream* stre
 #define YAMUX_WARN(fmt, ...) ((void)0)
 #endif
 
-/* 核心依赖库 */
+/* Core dependencies */
 #include <stdlib.h> /* malloc, free */
 #include <string.h> /* memcpy, memset */
 #include <time.h>   /* clock_gettime */
 
-// 定义最大帧负载大小
+// Max frame payload size
 #define YAMUX_MAX_FRAME_PAYLOAD_SIZE (1024 * 1024) // 1MB
 
-// 获取当前时间的函数声明
+// Time helper declaration
 uint64_t yamux_time_now(void);
-
-/* 错误码定义 */
-/* 可替换为自定义错误码，不依赖errno.h */
-#define YAMUX_ERR_NONE       0
-#define YAMUX_ERR_INVALID   -1
-#define YAMUX_ERR_MEM       -2
-#define YAMUX_ERR_PROTO     -3
-#define YAMUX_ERR_IO        -4
-#define YAMUX_ERR_EOF       -5
-#define YAMUX_ERR_CLOSED    -6
-#define YAMUX_ERR_TIMEOUT   -7
-#define YAMUX_ERR_NOTFOUND  -8
-#define YAMUX_ERR_WINDOW    -9
 
 // Internal stream states
 enum yamux_stream_state {
@@ -104,7 +93,7 @@ struct yamux_session {
     uint32_t last_ping_opaque_id;
     uint64_t last_data_received_time_ms; // or last frame received time
 
-    // 心跳相关
+    // Keepalive related
     uint64_t last_ping_time;
 };
 
@@ -209,10 +198,18 @@ static int send_frame(struct yamux_session* s, yamux_frame_header_t* header, con
         return YAMUX_ERR_INVALID;
     }
 
+    // NOTE: Alignment with third-party/yamux:
+    // - Only DATA frames carry payload; header.length is payload byte length.
+    // - WINDOW_UPDATE / PING / GO_AWAY carry no payload; header.length is a semantic field (delta/ping_id/goaway_code).
+    uint32_t payload_len = 0;
+    if (header->type == YAMUX_TYPE_DATA) {
+        payload_len = header->length;
+    }
+
     uint8_t header_buf[YAMUX_FRAME_HEADER_SIZE];
     yamux_serialize_frame_header(header, header_buf);
 
-    // 发送帧头
+    // Send frame header.
     size_t header_sent = 0;
     while (header_sent < YAMUX_FRAME_HEADER_SIZE) {
         // Use a temporary variable for the result of write_fn
@@ -220,7 +217,7 @@ static int send_frame(struct yamux_session* s, yamux_frame_header_t* header, con
                                            header_buf + header_sent, 
                                            YAMUX_FRAME_HEADER_SIZE - header_sent);
         if (written_now <= 0) {
-            // 写入错误
+            // Write error.
             YAMUX_ERROR("Failed to write frame header at offset %zu/%d (error: %zd)", 
                         header_sent, YAMUX_FRAME_HEADER_SIZE, written_now);
             s->last_error = YAMUX_ERR_IO;
@@ -230,28 +227,31 @@ static int send_frame(struct yamux_session* s, yamux_frame_header_t* header, con
     }
     YAMUX_LOG("   (Sent %zu header bytes)", header_sent);
 
-    // 发送荷载（如果有）
-    if (header->length > 0 && payload != NULL) {
-        YAMUX_LOG("   (Attempting to send %u payload bytes from %p)", header->length, payload);
+    // Send payload (DATA frames only).
+    if (payload_len > 0) {
+        if (payload == NULL) {
+            YAMUX_ERROR("DATA frame payload is NULL but length=%u", payload_len);
+            s->last_error = YAMUX_ERR_INVALID;
+            return YAMUX_ERR_INVALID;
+        }
+        YAMUX_LOG("   (Attempting to send %u payload bytes from %p)", payload_len, payload);
         size_t payload_sent = 0;
-        while (payload_sent < header->length) {
-            size_t remaining = header->length - payload_sent;
+        while (payload_sent < payload_len) {
+            size_t remaining = payload_len - payload_sent;
             // Use a temporary variable for the result of write_fn
             ssize_t written_now = s->config.write_fn(s->config.user_conn_ctx, 
                                                payload + payload_sent, 
                                                remaining);
             if (written_now <= 0) {
-                // 写入错误
+                // Write error.
                 YAMUX_ERROR("Failed to write frame payload at offset %zu/%u (error: %zd)",
-                            payload_sent, header->length, written_now);
+                            payload_sent, payload_len, written_now);
                 s->last_error = YAMUX_ERR_IO;
                 return YAMUX_ERR_IO;
             }
             payload_sent += written_now;
         }
         YAMUX_LOG("   (Sent %zu payload bytes)", payload_sent);
-    } else if (header->length > 0 && payload == NULL) {
-        YAMUX_LOG("   (Skipped sending payload, header.length=%u but payload is NULL)", header->length);
     }
     
     YAMUX_LOG("<< Frame Sent Successfully: SID=%u, Type=0x%x", header->stream_id, header->type);
@@ -271,15 +271,24 @@ static int send_rst_frame(struct yamux_session* s, uint32_t stream_id) {
 }
 
 static int send_ack_frame(struct yamux_session* s, uint32_t stream_id) {
-    yamux_frame_header_t ack_header;
-    ack_header.version = YAMUX_VERSION;
-    // ACK flag can be on Data or WindowUpdate. Let's use WindowUpdate.
-    ack_header.type = YAMUX_TYPE_WINDOW_UPDATE;
-    ack_header.flags = YAMUX_FLAG_ACK;
-    ack_header.stream_id = stream_id;
-    ack_header.length = 0; // No payload for ACK typically
-    YAMUX_LOG("Sending ACK for stream ID %u", stream_id);
-    return send_frame(s, &ack_header, NULL);
+    yamux_frame_header_t header;
+    header.version = YAMUX_VERSION;
+    header.type = YAMUX_TYPE_DATA;
+    header.flags = YAMUX_FLAG_ACK;
+    header.stream_id = stream_id;
+    header.length = 0; // ACK typically has no payload unless combined
+
+    struct yamux_stream* st = find_stream(s, stream_id);
+    if (st && !s->is_client && st->state == YAMUX_STREAM_STATE_SYN_RECEIVED) {
+         YAMUX_LOG("Server: Sending ACK for stream %u, current stream state SYN_RECEIVED", stream_id);
+    } else if (st && s->is_client && st->state == YAMUX_STREAM_STATE_ESTABLISHED) {
+         YAMUX_LOG("Client: Sending ACK for stream %u (likely window update ack), current stream state ESTABLISHED", stream_id);
+    } else if (st) {
+         YAMUX_LOG("Sending ACK for stream %u, current stream state %d", stream_id, st->state);
+    } else {
+         YAMUX_LOG("Sending ACK for stream %u (stream not found or ACK for non-data frame)", stream_id);
+    }
+    return send_frame(s, &header, NULL);
 }
 
 static int send_goaway_frame(struct yamux_session* s, uint32_t error_code) {
@@ -291,12 +300,11 @@ static int send_goaway_frame(struct yamux_session* s, uint32_t error_code) {
     goaway_header.type = YAMUX_TYPE_GO_AWAY;
     goaway_header.flags = 0;
     goaway_header.stream_id = 0; // StreamID must be 0 for GoAway
-    goaway_header.length = sizeof(uint32_t); // Length is for the error code
-
-    uint32_t error_code_n = tools_htonl(error_code);
+    // Alignment with third-party/yamux: GoAway has no payload; length is the error code.
+    goaway_header.length = error_code;
 
     YAMUX_LOG("Sending GoAway with error code %u", error_code);
-    int ret = send_frame(s, &goaway_header, (const uint8_t*)&error_code_n);
+    int ret = send_frame(s, &goaway_header, NULL);
     if (ret == YAMUX_ERR_NONE) {
         s->goaway_sent = true;
         // After sending GoAway, we should not accept new streams or send more data on existing ones.
@@ -354,7 +362,7 @@ yamux_session_t* yamux_session_new(const yamux_config_t* config, bool is_client,
     // TODO: Initialize keep-alive timers if enabled
     // s->last_data_received_time_ms = tools_get_time_ms(); 
 
-    // 心跳相关
+    // Keepalive related.
     s->last_ping_time = yamux_time_now();
 
     YAMUX_LOG("Session created (client: %d, user_conn_ctx: %p)", is_client, s->config.user_conn_ctx);
@@ -396,17 +404,8 @@ void yamux_session_free(yamux_session_t* session) {
 
 uint32_t yamux_session_open_stream(yamux_session_t* session, void** stream_user_data_out) {
     struct yamux_session* s = (struct yamux_session*)session;
-    if (!s) {
-        YAMUX_ERROR("Session is null");
-        return 0; // 0 is not a valid stream ID, indicates error
-    }
-    if (s->goaway_received && s->next_stream_id > s->remote_goaway_last_stream_id) {
-         YAMUX_ERROR("Session received GoAway, cannot open new streams past ID %u", s->remote_goaway_last_stream_id);
-         s->last_error = YAMUX_ERR_CLOSED;
-         return 0;
-    }
-    if (s->goaway_sent) {
-        YAMUX_ERROR("Session has sent GoAway, cannot open new streams");
+    if (!s || s->goaway_sent || s->goaway_received) {
+        YAMUX_ERROR("Session is closing or already closed");
         s->last_error = YAMUX_ERR_CLOSED;
         return 0;
     }
@@ -432,7 +431,7 @@ uint32_t yamux_session_open_stream(yamux_session_t* session, void** stream_user_
     stream->local_window_size = s->config.initial_stream_window_size;
     stream->peer_window_size = s->config.initial_stream_window_size; // Assume peer also has this initial window
 
-    // 正确设置 stream 结构中的 user_data
+    // Correctly set stream->user_data.
     if (stream_user_data_out) {
         stream->user_data = *stream_user_data_out; 
         YAMUX_LOG("Assigning user_data %p to new stream %u", stream->user_data, stream->id);
@@ -454,32 +453,26 @@ uint32_t yamux_session_open_stream(yamux_session_t* session, void** stream_user_
     stream->next = NULL;
     s->active_streams_count++;
 
+    // Send SYN frame
     yamux_frame_header_t header;
     header.version = YAMUX_VERSION;
-    header.type = YAMUX_TYPE_DATA; 
+    header.type = YAMUX_TYPE_DATA;
     header.flags = YAMUX_FLAG_SYN;
     header.stream_id = stream->id;
-    header.length = 0; 
+    header.length = 0; // SYN itself typically has no payload here; window size is implicit or separate.
+                       // Or, initial window size can be sent as payload for SYN.
+                       // For fatedier/yamux, SYN itself doesn't carry window size in payload.
+                       // The stream->local_window_size is our initial window for the peer.
 
-    YAMUX_LOG("Client opening stream ID %u (user_data: %p), sending SYN (type:0x%x, flags:0x%x, len:%u)", 
-           stream->id, stream->user_data, header.type, header.flags, header.length);
+    YAMUX_LOG("Client: Opening stream ID %u (user_data: %p), sending SYN", stream->id, *stream_user_data_out);
 
     if (send_frame(s, &header, NULL) != YAMUX_ERR_NONE) {
-        // Rollback stream creation
-        if (stream->prev) {
-            stream->prev->next = NULL;
-            s->streams_tail = stream->prev;
-        } else { // stream was the only one
-            s->streams_head = NULL;
-            s->streams_tail = NULL;
-        }
-        s->active_streams_count--;
-        free(stream);
-        // next_stream_id was already incremented, this might lead to a gap, which is fine.
+        YAMUX_ERROR("Client: Failed to send SYN for stream %u", stream->id);
+        remove_and_free_stream(s, stream->id, false, 0);
         return 0; // Error
     }
-    
-    YAMUX_LOG("Stream ID %u SYN sent", stream->id);
+    stream->state = YAMUX_STREAM_STATE_SYN_SENT;
+    YAMUX_LOG("Client: Stream %u SYN sent, state: SYN_SENT", stream->id); // extra trace
     return stream->id;
 }
 
@@ -490,7 +483,7 @@ uint32_t yamux_session_open_stream(yamux_session_t* session, void** stream_user_
 // Placeholder for yamux_stream_read - driven by on_stream_data callback
 // ssize_t yamux_stream_read(yamux_stream_t* stream, void* buf, size_t len) -> user calls on_stream_data
 
-// 流数据写入函数，完全按照Go yamux的实现逻辑
+// Stream write implementation aligned with upstream Go yamux behavior.
 int yamux_stream_write(yamux_session_t* session, uint32_t stream_id, const uint8_t* data, size_t len) {
     struct yamux_session* s = (struct yamux_session*)session;
     if (!s || !data) {
@@ -498,25 +491,17 @@ int yamux_stream_write(yamux_session_t* session, uint32_t stream_id, const uint8
         return YAMUX_ERR_INVALID;
     }
     
-    // 如果长度为0，直接返回成功
+    // If len is 0, succeed immediately.
     if (len == 0) {
         return 0;
     }
     
-    // 查找流
+    // Find stream.
     struct yamux_stream* st = find_stream(s, stream_id);
     if (!st) {
         YAMUX_ERROR("Stream ID %u not found for write", stream_id);
         s->last_error = YAMUX_ERR_NOTFOUND;
         return YAMUX_ERR_NOTFOUND;
-    }
-    
-    // 检查流状态 - 类似Go实现的状态检查
-    if (st->state != YAMUX_STREAM_STATE_ESTABLISHED && 
-        st->state != YAMUX_STREAM_STATE_REMOTE_FIN /* 对方关闭了，我们还可以写入 */) {
-        YAMUX_ERROR("Stream ID %u not in a writable state (%d)", stream_id, st->state);
-        s->last_error = YAMUX_ERR_CLOSED;
-        return YAMUX_ERR_CLOSED;
     }
     
     if (st->state == YAMUX_STREAM_STATE_LOCAL_FIN || 
@@ -528,77 +513,76 @@ int yamux_stream_write(yamux_session_t* session, uint32_t stream_id, const uint8
         return YAMUX_ERR_CLOSED;
     }
 
-    // 检查对方窗口大小
-    YAMUX_LOG("流 %u 当前对方窗口大小：%u，尝试写入 %zu 字节", 
+    // Check peer window.
+    YAMUX_LOG("stream %u peer window: %u, trying to write %zu bytes",
              stream_id, st->peer_window_size, len);
              
-    // 这与Go的实现完全一致，当窗口为0时，返回窗口错误
+    // Match Go behavior: when window is 0, return a window error.
     if (st->peer_window_size == 0) {
-        YAMUX_WARN("流 %u 对方窗口已满 (size=0)，无法写入", stream_id);
-        return YAMUX_ERR_WINDOW; // 窗口为0，无法写入
+        YAMUX_WARN("stream %u peer window is full (size=0), cannot write", stream_id);
+        return YAMUX_ERR_WINDOW; // window is 0, cannot write
     }
 
-    // 计算本次实际可发送的数据量（取窗口大小和数据长度的较小值）
+    // Compute bytes to send: min(peer window, requested length).
     size_t bytes_to_send = len;
     if (bytes_to_send > st->peer_window_size) {
         bytes_to_send = st->peer_window_size;
-        YAMUX_LOG("受窗口限制：流 %u 只能发送 %zu/%zu 字节", 
+        YAMUX_LOG("window-limited: stream %u can only send %zu/%zu bytes",
                  stream_id, bytes_to_send, len);
     }
     
-    // 限制为单次最大帧大小，与Go yamux的MaxFrameSize一致
-    const size_t max_payload_per_frame = 32768; // 32KB，Go yamux默认值
+    // Limit to one frame max payload size (matches Go yamux MaxFrameSize).
+    const size_t max_payload_per_frame = 32768; // 32KB (Go yamux default)
     if (bytes_to_send > max_payload_per_frame) {
         bytes_to_send = max_payload_per_frame;
-        YAMUX_LOG("受帧大小限制：流 %u 只能发送 %zu/%zu 字节", 
+        YAMUX_LOG("frame-size-limited: stream %u can only send %zu/%zu bytes",
                  stream_id, bytes_to_send, len);
     }
     
-    // 处理标志 - 类似Go中的sendFlags()
+    // Flags handling (similar to Go's sendFlags()).
     uint16_t flags = 0;
     
-    // 根据流状态设置适当的标志
+    // Set flags based on stream state.
     switch (st->state) {
     case YAMUX_STREAM_STATE_IDLE:
         flags |= YAMUX_FLAG_SYN;
         st->state = YAMUX_STREAM_STATE_SYN_SENT;
-        YAMUX_LOG("流 %u 状态从IDLE转为SYN_SENT", stream_id);
+        YAMUX_LOG("stream %u state: IDLE -> SYN_SENT", stream_id);
         break;
     case YAMUX_STREAM_STATE_SYN_RECEIVED:
         flags |= YAMUX_FLAG_ACK;
         st->state = YAMUX_STREAM_STATE_ESTABLISHED;
-        YAMUX_LOG("流 %u 状态从SYN_RECEIVED转为ESTABLISHED", stream_id);
+        YAMUX_LOG("stream %u state: SYN_RECEIVED -> ESTABLISHED", stream_id);
         break;
     default:
-        // 其他状态不需要额外标志
+        // No extra flags needed for other states.
         break;
     }
     
     // Note: The argument order is bytes_to_send (size_t), stream_id (uint32_t), st->peer_window_size (uint32_t)
-    YAMUX_LOG("准备为流 %u 发送 %zu 字节 (对方窗口: %u)",
-              stream_id, bytes_to_send, st->peer_window_size);
+    YAMUX_LOG("preparing to send %zu bytes on stream %u (peer window: %u)",
+              bytes_to_send, stream_id, st->peer_window_size);
 
-    // 准备数据帧
+    // Prepare data frame.
     yamux_frame_header_t header;
     header.version = YAMUX_VERSION;
     header.type = YAMUX_TYPE_DATA;
-    header.flags = flags; // 包含可能的控制标志
+    header.flags = flags; // may include control flags (SYN/ACK)
     header.stream_id = stream_id;
     header.length = (uint32_t)bytes_to_send;
 
-    // 发送帧
+    // Send frame.
     int ret = send_frame(s, &header, data);
     if (ret != YAMUX_ERR_NONE) {
-        YAMUX_ERROR("无法发送数据帧，流ID %u：错误 %d", stream_id, ret);
+        YAMUX_ERROR("failed to send data frame: stream_id=%u, err=%d", stream_id, ret);
         return ret;
     }
 
-    // 成功发送后，减少对方窗口大小
+    // After a successful send, decrease peer window.
     st->peer_window_size -= bytes_to_send;
-    YAMUX_LOG("发送后：流 %u 对方窗口减少到 %u", stream_id, st->peer_window_size);
+    YAMUX_LOG("after send: stream %u peer window reduced to %u", stream_id, st->peer_window_size);
     
-    // 返回实际发送的字节数，而不是错误码
-    // 这与Go的返回值行为一致
+    // Return the number of bytes sent (not an error code), matching Go behavior.
     return (int)bytes_to_send;
 }
 
@@ -660,7 +644,7 @@ int yamux_stream_window_update(yamux_session_t* session, uint32_t stream_id, uin
     struct yamux_session* s = (struct yamux_session*)session;
     if (!s) return YAMUX_ERR_INVALID;
     
-    // 如果增量为0，无需更新
+    // If increment is 0, nothing to do.
     if (increment == 0) {
         return YAMUX_ERR_NONE;
     }
@@ -672,7 +656,7 @@ int yamux_stream_window_update(yamux_session_t* session, uint32_t stream_id, uin
         return YAMUX_ERR_NOTFOUND;
     }
     
-    // 检查流状态，如果流已关闭则不需要发送窗口更新
+    // Check stream state; if the stream is closed/reset, do not send window updates.
     if (st->state == YAMUX_STREAM_STATE_CLOSED || 
         st->state == YAMUX_STREAM_STATE_RST_SENT || 
         st->state == YAMUX_STREAM_STATE_RST_RECEIVED) {
@@ -680,21 +664,21 @@ int yamux_stream_window_update(yamux_session_t* session, uint32_t stream_id, uin
         return YAMUX_ERR_NONE;
     }
     
-    // 计算新窗口大小
+    // Compute new window size.
     uint32_t max_window = s->config.max_stream_window_size;
     uint32_t cur_window = st->local_window_size;
     
-    YAMUX_LOG("窗口更新前：流 %u 当前窗口 %u，最大窗口 %u，请求增加 %u", 
+    YAMUX_LOG("before window update: stream %u window=%u max=%u requested_inc=%u",
               stream_id, cur_window, max_window, increment);
     
-    // 防止超过最大窗口大小
+    // Clamp so we don't exceed the max window size.
     if (cur_window + increment > max_window) {
-        YAMUX_WARN("流 %u 窗口增量 %u 会超过最大值 %u，调整为 %u", 
+        YAMUX_WARN("stream %u window increment %u would exceed max %u, clamping to %u",
                  stream_id, increment, max_window, max_window - cur_window);
         
         increment = max_window - cur_window;
         
-        // 如果当前窗口已经是最大值，则不需要更新
+        // If already at max window, nothing to do.
         if (increment == 0) {
             YAMUX_WARN("Stream %u window already at maximum (%u), skipping update", 
                      stream_id, max_window);
@@ -702,21 +686,21 @@ int yamux_stream_window_update(yamux_session_t* session, uint32_t stream_id, uin
         }
     }
     
-    // 更新本地窗口大小
+    // Update local window size.
     st->local_window_size += increment;
     
-    // 准备窗口更新帧
+    // Prepare WindowUpdate frame.
     yamux_frame_header_t header;
     header.version = YAMUX_VERSION;
     header.type = YAMUX_TYPE_WINDOW_UPDATE;
     header.flags = 0; 
     header.stream_id = stream_id;
-    header.length = increment; // 窗口增量
+    header.length = increment; // window delta
 
-    YAMUX_LOG("发送窗口更新：流 %u，增量 %u，新窗口大小 %u", 
+    YAMUX_LOG("sending window update: stream %u inc=%u new_window=%u",
               stream_id, increment, st->local_window_size);
     
-    // 发送窗口更新帧
+    // Send WindowUpdate frame.
     int ret = send_frame(s, &header, NULL);
     if (ret != YAMUX_ERR_NONE) {
         YAMUX_ERROR("Failed to send window update frame for stream %u", stream_id);
@@ -733,12 +717,11 @@ void yamux_session_tick(yamux_session_t* session) {
     struct yamux_session* s = (struct yamux_session*)session;
     if (!s) return;
     
-    // 1. 处理心跳
+    // 1) Keepalive
     if (s->config.enable_keepalive) {
         uint64_t current_time = yamux_time_now();
         
-        // 如果last_ping_time为0，初始化为当前时间减去一个周期
-        // 这样第一次不会立即发送PING
+        // If last_ping_time is 0, initialize it and skip sending immediately.
         if (s->last_ping_time == 0) {
             s->last_ping_time = current_time;
             return;
@@ -746,45 +729,44 @@ void yamux_session_tick(yamux_session_t* session) {
         
         uint64_t time_since_last_ping = current_time - s->last_ping_time;
         
-        // 检查是否需要发送心跳
+        // Check if we should send a keepalive ping.
         if (time_since_last_ping >= s->config.keepalive_interval_ms) {
-            YAMUX_LOG("发送心跳PING帧");
+            YAMUX_LOG("sending keepalive PING frame");
             
-            // 生成随机PING值 (可用作不透明值)
-            uint32_t ping_value = (uint32_t)current_time;
-            ping_value = tools_htonl(ping_value); // 转换为网络字节序
+            // Alignment with third-party/yamux: PING has no payload; length carries the opaque id.
+            // Request uses SYN; response uses ACK.
+            uint32_t ping_id = (uint32_t)current_time;
             
-            // 准备PING帧
+            // Prepare PING frame.
             yamux_frame_header_t header;
             header.version = YAMUX_VERSION;
             header.type = YAMUX_TYPE_PING;
-            header.flags = 0; // 不带标志表示请求PING
-            header.stream_id = 0; // PING使用流ID 0
-            header.length = sizeof(uint32_t); // PING值长度
+            header.flags = YAMUX_FLAG_SYN; // Ping request
+            header.stream_id = 0; // Ping uses stream ID 0
+            header.length = ping_id; // Ping opaque id
             
-            // 发送PING帧
-            int ret = send_frame(s, &header, (const uint8_t*)&ping_value);
+            // Send PING frame.
+            int ret = send_frame(s, &header, NULL);
             if (ret != YAMUX_ERR_NONE) {
                 YAMUX_ERROR("Failed to send PING frame: %d", ret);
                 return;
             }
             
-            // 更新最后发送时间和PING ID
+            // Update last send time and ping id.
             s->last_ping_time = current_time;
-            s->last_ping_opaque_id = ping_value;
+            s->last_ping_opaque_id = ping_id;
         }
     }
     
-    // 2. 处理其他周期性任务（如果有）
-    // TODO: 超时检查等
+    // 2) Other periodic tasks (if any)
+    // TODO: timeouts, etc.
 }
 
 // --- yamux_session_receive ---
 // This function is called by the user when new data arrives on the underlying connection.
 int yamux_session_receive(yamux_session_t* session, const uint8_t* data, size_t len) {
     struct yamux_session* s = (struct yamux_session*)session;
-    if (!s || (!data && len > 0)) { // Allow data == NULL only if len == 0 (EOF)
-        if (s) s->last_error = YAMUX_ERR_INVALID;
+    if (!s || !data || len == 0) {
         return YAMUX_ERR_INVALID;
     }
 
@@ -827,17 +809,21 @@ int yamux_session_receive(yamux_session_t* session, const uint8_t* data, size_t 
             return YAMUX_ERR_PROTO; // Fatal error for the session
         }
         
-        // Check for excessively large frame length early
-        if (header.length > YAMUX_MAX_FRAME_PAYLOAD_SIZE) { // Define YAMUX_MAX_FRAME_PAYLOAD_SIZE e.g., 1MB
-            YAMUX_ERROR("Received frame with excessive length %u > max %u", header.length, YAMUX_MAX_FRAME_PAYLOAD_SIZE);
-            send_goaway_frame(s, YAMUX_GOAWAY_PROTOCOL_ERROR);
-            s->last_error = YAMUX_ERR_PROTO;
-            return YAMUX_ERR_PROTO;
+        // Alignment with third-party/yamux: only DATA frames carry payload; other types treat length as a semantic field.
+        uint32_t payload_len = 0;
+        if (header.type == YAMUX_TYPE_DATA) {
+            payload_len = header.length;
+            if (payload_len > YAMUX_MAX_FRAME_PAYLOAD_SIZE) {
+                YAMUX_ERROR("Received DATA frame with excessive payload length %u > max %u", payload_len, YAMUX_MAX_FRAME_PAYLOAD_SIZE);
+                send_goaway_frame(s, YAMUX_GOAWAY_PROTOCOL_ERROR);
+                s->last_error = YAMUX_ERR_PROTO;
+                return YAMUX_ERR_PROTO;
+            }
         }
 
-        size_t frame_total_size = YAMUX_FRAME_HEADER_SIZE + header.length;
+        size_t frame_total_size = YAMUX_FRAME_HEADER_SIZE + payload_len;
         YAMUX_LOG(">> Calculated frame_total_size=%zu (hdr=%d, payload=%u)", 
-                 frame_total_size, YAMUX_FRAME_HEADER_SIZE, header.length);
+                 frame_total_size, YAMUX_FRAME_HEADER_SIZE, payload_len);
 
         if (remaining_len < frame_total_size) {
              YAMUX_LOG(">> Incomplete frame (need %zu, have %zu), breaking loop.", frame_total_size, remaining_len);
@@ -851,55 +837,35 @@ int yamux_session_receive(yamux_session_t* session, const uint8_t* data, size_t 
         if (header.stream_id == 0) { // Session control messages
             switch (header.type) {
                 case YAMUX_TYPE_PING:
-                    if (header.length != sizeof(uint32_t) && header.length != 0) { // Ping payload must be 4 bytes (opaque) or 0 for older draft
-                         YAMUX_ERROR("Ping frame with invalid length %u", header.length);
-                         send_goaway_frame(s, YAMUX_GOAWAY_PROTOCOL_ERROR);
-                         s->last_error = YAMUX_ERR_PROTO;
-                         return YAMUX_ERR_PROTO;
-                    }
-                    if (header.flags == 0) { // Ping request
+                    // Alignment with third-party/yamux: PING has no payload; length carries the opaque id.
+                    // Request uses SYN; response uses ACK.
+                    if (header.flags & YAMUX_FLAG_SYN) { // Ping request
                         YAMUX_LOG("Received PING request (SID 0), sending PONG");
                         yamux_frame_header_t pong_header;
                         pong_header.version = YAMUX_VERSION;
                         pong_header.type = YAMUX_TYPE_PING;
-                        pong_header.flags = YAMUX_FLAG_ACK; // Pong is an ACK
+                        pong_header.flags = YAMUX_FLAG_ACK;
                         pong_header.stream_id = 0;
-                        pong_header.length = header.length; // Echo opaque data
-                        send_frame(s, &pong_header, payload); 
-                    } else if (header.flags & YAMUX_FLAG_ACK) { // Ping response (PONG)
-                        YAMUX_LOG("Received PONG (SID 0)");
-                        // TODO: Match opaque data if keepalive implemented, calculate RTT
-                        // s->last_data_received_time_ms = tools_get_time_ms(); // or specific pong received time
+                        pong_header.length = header.length; // Echo ping id
+                        (void)send_frame(s, &pong_header, NULL);
+                    } else if (header.flags & YAMUX_FLAG_ACK) { // Ping response
+                        YAMUX_LOG("Received PONG (SID 0), id=%u", header.length);
                     } else {
-                        YAMUX_ERROR("Ping frame with invalid flags 0x%x", header.flags);
-                        // Go spec says "ignore", let's do that.
+                        // Per upstream behavior: ignore other flag combinations.
+                        YAMUX_WARN("Ping frame with unexpected flags 0x%x, ignoring", header.flags);
                     }
                     break;
                 case YAMUX_TYPE_GO_AWAY:
                     YAMUX_LOG("Received GoAway frame (SID 0).");
                     s->goaway_received = true;
-                    if (header.length == sizeof(uint32_t)) {
-                        memcpy(&s->remote_goaway_last_stream_id, payload, sizeof(uint32_t));
-                        s->remote_goaway_last_stream_id = tools_ntohl(s->remote_goaway_last_stream_id);
-                        uint32_t goaway_error_code; // we can also get the error code from payload
-                        memcpy(&goaway_error_code, payload, sizeof(uint32_t)); // assuming length is 4
-                        goaway_error_code = tools_ntohl(goaway_error_code);
-
-                        YAMUX_LOG("GoAway from peer, last processed StreamID: %u, error code: %u", 
-                               s->remote_goaway_last_stream_id, goaway_error_code);
-                        // If we also sent GoAway, this is a confirmation.
-                        // If not, this is the peer initiating shutdown.
-                        // TODO: Close streams with ID > remote_goaway_last_stream_id if they were locally initiated.
-                        // TODO: Trigger on_session_close callback if defined.
-                    } else {
-                        YAMUX_WARN("GoAway frame with unexpected length %u, expected %zu", header.length, sizeof(uint32_t));
-                        // Still treat as GoAway received
-                    }
+                    // Alignment with third-party/yamux: GoAway has no payload; length is the error code.
+                    s->remote_goaway_last_stream_id = 0;
+                    YAMUX_LOG("GoAway from peer, error code: %u", header.length);
                     // The session should now be considered draining. No new streams should be opened.
                     // Existing streams might continue until remote_goaway_last_stream_id or they complete.
                     // For simplicity now, once goaway_received, we might stop most operations.
                     if (s->config.on_session_close) {
-                         s->config.on_session_close(s->session_user_data, true /*by_remote*/, 0 /*TODO: map goaway code*/);
+                         s->config.on_session_close(s->session_user_data, true /*by_remote*/, header.length);
                     }
                     // We should also send our own GoAway if we haven't already.
                     if (!s->goaway_sent) {
@@ -935,47 +901,60 @@ int yamux_session_receive(yamux_session_t* session, const uint8_t* data, size_t 
                             YAMUX_WARN("Session is closing (GoAway). Rejecting new StreamID %u with RST", header.stream_id);
                             send_rst_frame(s, header.stream_id);
                         } else {
-                            void* stream_user_data = NULL;
-                            bool accepted = false;
-                            if (s->config.on_new_stream) {
-                                YAMUX_LOG(">> Calling on_new_stream for Stream %u (user_data_ptr: %p)", header.stream_id, &stream_user_data);
-                                accepted = s->config.on_new_stream(s->session_user_data, header.stream_id, &stream_user_data);
-                                YAMUX_LOG(">> on_new_stream for Stream %u returned: %d, user_data_val: %p", header.stream_id, accepted, stream_user_data);
+                            struct yamux_stream* provisional_stream = (struct yamux_stream*)malloc(sizeof(struct yamux_stream));
+                            if (!provisional_stream) {
+                                YAMUX_ERROR("Failed to allocate memory for provisional stream %u", header.stream_id);
+                                send_goaway_frame(s, YAMUX_GOAWAY_INTERNAL_ERROR);
+                                s->last_error = YAMUX_ERR_MEM;
+                                return YAMUX_ERR_MEM; // Fatal for session
                             }
-                            if (accepted) {
-                                YAMUX_LOG("New stream %u accepted and created.", header.stream_id);
-                                struct yamux_stream* new_stream = (struct yamux_stream*)malloc(sizeof(struct yamux_stream));
-                                if (!new_stream) {
-                                    YAMUX_ERROR("Failed to allocate memory for new stream");
-                                    send_rst_frame(s, header.stream_id); // Can't accept if out of memory
-                                    s->last_error = YAMUX_ERR_MEM;
-                                    // This is a local error, but we RST the peer's attempt.
-                                } else {
-                                    memset(new_stream, 0, sizeof(struct yamux_stream));
-                                    new_stream->id = header.stream_id;
-                                    new_stream->session = s;
-                                    new_stream->state = YAMUX_STREAM_STATE_ESTABLISHED; // Goes to established after ACK
-                                    new_stream->local_window_size = s->config.initial_stream_window_size;
-                                    new_stream->peer_window_size = s->config.initial_stream_window_size; // Assume peer starts with this
-                                    new_stream->user_data = stream_user_data;
+                            memset(provisional_stream, 0, sizeof(struct yamux_stream));
+                            provisional_stream->id = header.stream_id;
+                            provisional_stream->session = s;
+                            provisional_stream->state = YAMUX_STREAM_STATE_SYN_RECEIVED; // Tentative state
+                            provisional_stream->local_window_size = s->config.initial_stream_window_size;
+                            provisional_stream->peer_window_size = s->config.initial_stream_window_size;
 
-                                    // Add to session's stream list
-                                    if (!s->streams_head) {
-                                        s->streams_head = new_stream;
-                                        s->streams_tail = new_stream;
-                                    } else {
-                                        s->streams_tail->next = new_stream;
-                                        new_stream->prev = s->streams_tail;
-                                        s->streams_tail = new_stream;
-                                    }
-                                    s->active_streams_count++;
-                                    
-                                    send_ack_frame(s, header.stream_id);
-                                    // If ACK send fails, we should clean up the stream. TODO.
-                                }
+                            void* stream_user_data_out = NULL;
+                            int accepted_by_app = 0; // 0 = reject, 1 = accept, <0 = error
+
+                            if (s->config.on_new_stream) {
+                                YAMUX_LOG(">> Calling on_new_stream for Stream %u (provisional stream: %p, user_data_ptr_out: %p)", 
+                                          header.stream_id, (void*)provisional_stream, &stream_user_data_out);
+                                
+                                struct yamux_stream* stream_ptr_arg = provisional_stream;
+                                accepted_by_app = s->config.on_new_stream(s->session_user_data, &stream_ptr_arg, &stream_user_data_out);
+                                // stream_ptr_arg could potentially be modified by callback, but we use provisional_stream.
+
+                                YAMUX_LOG(">> on_new_stream for Stream %u returned: %d, user_data_val: %p", 
+                                          header.stream_id, accepted_by_app, stream_user_data_out);
                             } else {
-                                YAMUX_WARN("App rejected new StreamID %u. Sending RST", header.stream_id);
+                                YAMUX_WARN("on_new_stream callback is NULL. Rejecting stream %u.", header.stream_id);
+                                accepted_by_app = 0; // No callback, effectively rejected
+                            }
+
+                            if (accepted_by_app == 1) { // Application accepted
+                                YAMUX_LOG("New stream %u accepted and being finalized.", header.stream_id);
+                                provisional_stream->user_data = stream_user_data_out;
+                                provisional_stream->state = YAMUX_STREAM_STATE_ESTABLISHED; // Set after ACK sent
+
+                                if (!s->streams_head) {
+                                    s->streams_head = provisional_stream;
+                                    s->streams_tail = provisional_stream;
+                                } else {
+                                    s->streams_tail->next = provisional_stream;
+                                    provisional_stream->prev = s->streams_tail;
+                                    s->streams_tail = provisional_stream;
+                                }
+                                s->active_streams_count++;
+                                
+                                send_ack_frame(s, header.stream_id);
+                                // TODO: If ACK send fails, should clean up stream.
+                            } else { // Application rejected (0) or error (<0)
+                                YAMUX_WARN("App rejected new StreamID %u (code: %d). Sending RST.", header.stream_id, accepted_by_app);
+                                free(provisional_stream); 
                                 send_rst_frame(s, header.stream_id);
+                                // Optionally handle accepted_by_app < 0 (error from callback)
                             }
                         }
                     } else {
@@ -1041,24 +1020,24 @@ int yamux_session_receive(yamux_session_t* session, const uint8_t* data, size_t 
     return (int)consumed_total;
 }
 
-// 获取当前时间（毫秒）
+// Get current time (milliseconds).
 uint64_t yamux_time_now(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
 }
 
-// 检查 yamux 会话是否已关闭
+// Check whether a Yamux session is closed.
 bool yamux_session_is_closed(yamux_session_t* session) {
     struct yamux_session* s = (struct yamux_session*)session;
-    if (!s) return true;  // Null 会话视为已关闭
+    if (!s) return true;  // NULL session is considered closed
     
-    // 如果收到或发送了 GoAway，则会话已关闭
+    // If GoAway is sent or received, the session is considered closed.
     if (s->goaway_received || s->goaway_sent) {
         return true;
     }
     
-    // 如果发生了严重错误，会话也视为关闭
+    // Fatal errors also mark the session as closed.
     if (s->last_error != YAMUX_ERR_NONE && 
         s->last_error != YAMUX_ERR_TIMEOUT &&
         s->last_error != YAMUX_ERR_WINDOW) {
@@ -1068,25 +1047,25 @@ bool yamux_session_is_closed(yamux_session_t* session) {
     return false;
 }
 
-// 关闭yamux会话
+// Close a Yamux session (send GoAway).
 int yamux_session_close(yamux_session_t* session) {
     struct yamux_session* s = (struct yamux_session*)session;
     if (!s) return YAMUX_ERR_INVALID;
     
     if (s->goaway_sent) {
-        return YAMUX_ERR_NONE; // 已经发送了GoAway，不需要再次关闭
+        return YAMUX_ERR_NONE; // GoAway already sent; no need to close again
     }
     
-    // 发送GoAway帧，表示会话正常关闭
+    // Send GoAway to indicate a graceful session shutdown.
     int ret = send_goaway_frame(s, YAMUX_GOAWAY_NORMAL);
     if (ret != YAMUX_ERR_NONE) {
         YAMUX_ERROR("Failed to send GoAway frame: %d", ret);
-        // 即使发送失败，也将会话标记为已关闭，因为我们的意图是关闭它
+        // Even if sending fails, we still mark the session as closed because our intent is to shut it down.
     }
     
     s->goaway_sent = true;
     
-    // 通知会话关闭
+    // Notify session close.
     if (s->config.on_session_close) {
         s->config.on_session_close(s->session_user_data, false, YAMUX_GOAWAY_NORMAL);
     }
@@ -1094,29 +1073,29 @@ int yamux_session_close(yamux_session_t* session) {
     return YAMUX_ERR_NONE;
 }
 
-// 处理窗口更新函数
+// Handle WindowUpdate frames.
 static int handleWindowUpdate(struct yamux_session* s, yamux_frame_header_t* hdr, uint16_t flags) {
     if (!s || !hdr) return YAMUX_ERR_INVALID;
     
     uint32_t stream_id = hdr->stream_id;
     uint32_t increment = hdr->length;
     
-    YAMUX_LOG("接收到窗口更新：流 %u，增量 %u，标志 0x%x", stream_id, increment, flags);
+    YAMUX_LOG("received WindowUpdate: stream %u inc=%u flags=0x%x", stream_id, increment, flags);
     
-    // 获取流对象
+    // Lookup stream.
     struct yamux_stream* stream = find_stream(s, stream_id);
     if (!stream) {
         YAMUX_WARN("WindowUpdate for unknown stream ID %u, ignoring", stream_id);
-        return YAMUX_ERR_NONE; // 忽略未知流的窗口更新
+        return YAMUX_ERR_NONE; // ignore window updates for unknown streams
     }
     
-    // 处理可能的标志（如ACK、FIN、RST）
+    // Process flags carried on WindowUpdate (ACK/FIN/RST, etc.).
     if (flags) {
         int ret = processStreamFlags(s, stream, flags);
         if (ret != YAMUX_ERR_NONE) return ret;
     }
     
-    // 如果流已关闭，忽略窗口更新
+    // If stream is closed, ignore window updates.
     if (stream->state == YAMUX_STREAM_STATE_CLOSED || 
         stream->state == YAMUX_STREAM_STATE_RST_SENT || 
         stream->state == YAMUX_STREAM_STATE_RST_RECEIVED) {
@@ -1124,38 +1103,38 @@ static int handleWindowUpdate(struct yamux_session* s, yamux_frame_header_t* hdr
         return YAMUX_ERR_NONE;
     }
     
-    // 如果是纯窗口更新（没有其他标志且有实际增量值）
+    // Pure window update (increment > 0).
     if (increment > 0) {
-        YAMUX_LOG("窗口更新前：流 %u 当前发送窗口 %u", stream_id, stream->peer_window_size);
+        YAMUX_LOG("before window update: stream %u send_window=%u", stream_id, stream->peer_window_size);
         
-        // 更新前检查溢出风险
+        // Check overflow / bounds before applying.
         uint32_t current_window = stream->peer_window_size;
         uint32_t max_window = s->config.max_stream_window_size;
         uint32_t new_window = current_window + increment;
         
-        // 检查溢出（新窗口小于当前窗口）
+        // Overflow check (new window wraps around).
         if (new_window < current_window) {
-            YAMUX_ERROR("流 %u：窗口更新会导致溢出 (%u + %u)，协议错误",
+            YAMUX_ERROR("stream %u: window update overflow (%u + %u), protocol error",
                        stream_id, current_window, increment);
             send_goaway_frame(s, YAMUX_GOAWAY_PROTOCOL_ERROR);
             return YAMUX_ERR_PROTO;
         }
         
-        // 检查是否超出最大窗口大小
+        // Clamp to max window size.
         if (max_window > 0 && new_window > max_window) {
-            YAMUX_WARN("流 %u：窗口更新超出最大值 (%u + %u > %u)，限制为最大值",
+            YAMUX_WARN("stream %u: window update exceeds max (%u + %u > %u), clamping",
                       stream_id, current_window, increment, max_window);
             new_window = max_window;
         }
         
-        // 增加发送窗口
+        // Increase send window.
         stream->peer_window_size = new_window;
-        YAMUX_LOG("流 %u：发送窗口增加 %u 到 %u", 
+        YAMUX_LOG("stream %u: send window increased by %u to %u",
                  stream_id, increment, new_window);
         
-        // 如果配置了回调，通知窗口更新
+        // Notify via callback if configured.
         if (s->config.on_stream_write_window_updated) {
-            YAMUX_LOG("调用窗口更新回调，流 %u，新窗口大小 %u", stream_id, new_window);
+            YAMUX_LOG("calling window update callback: stream %u new_window=%u", stream_id, new_window);
             s->config.on_stream_write_window_updated(stream->user_data, new_window);
         }
     }
@@ -1163,13 +1142,15 @@ static int handleWindowUpdate(struct yamux_session* s, yamux_frame_header_t* hdr
     return YAMUX_ERR_NONE;
 }
 
-// 处理流的标志（如SYN、ACK、FIN、RST）
+// Process stream flags (SYN/ACK/FIN/RST).
 static int processStreamFlags(struct yamux_session* s, struct yamux_stream* stream, uint16_t flags) {
     if (!s || !stream) return YAMUX_ERR_INVALID;
     
     if (flags & YAMUX_FLAG_SYN) {
         YAMUX_LOG("Processing SYN for stream %u", stream->id);
-        // 处理SYN标志...
+        // This path (processing SYN on an *existing* stream object) should ideally not be hit often,
+        // as new SYNs are handled by creating a new stream object in yamux_session_receive.
+        // However, if flags are processed late, this might occur.
     }
     
     if (flags & YAMUX_FLAG_ACK) {
@@ -1177,7 +1158,7 @@ static int processStreamFlags(struct yamux_session* s, struct yamux_stream* stre
         if (stream->state == YAMUX_STREAM_STATE_SYN_SENT) {
             stream->state = YAMUX_STREAM_STATE_ESTABLISHED;
             YAMUX_LOG("Stream %u established", stream->id);
-            // 调用流建立回调
+            // Call stream-established callback.
             if (s->config.on_stream_established) {
                 YAMUX_LOG("Stream %u: Calling on_stream_established callback (user_data: %p)", stream->id, stream->user_data);
                 s->config.on_stream_established(stream->user_data);
@@ -1190,22 +1171,22 @@ static int processStreamFlags(struct yamux_session* s, struct yamux_stream* stre
     
     if (flags & YAMUX_FLAG_FIN) {
         YAMUX_LOG("Processing FIN for stream %u", stream->id);
-        // 根据当前状态处理FIN
+        // Handle FIN based on current state.
         if (stream->state == YAMUX_STREAM_STATE_LOCAL_FIN) {
-            // 双向关闭
+            // Both sides have FIN'd: close stream.
             stream->state = YAMUX_STREAM_STATE_CLOSED;
-            // 通知关闭
+            // Notify close.
             if (s->config.on_stream_close) {
                 s->config.on_stream_close(stream->user_data, true, 0);
             }
-            // 释放流资源
+            // Free stream resources.
             remove_and_free_stream(s, stream->id, true, 0);
         } else if (stream->state != YAMUX_STREAM_STATE_CLOSED && 
                    stream->state != YAMUX_STREAM_STATE_RST_SENT &&
                    stream->state != YAMUX_STREAM_STATE_RST_RECEIVED) {
-            // 远端关闭流
+            // Remote half-close.
             stream->state = YAMUX_STREAM_STATE_REMOTE_FIN;
-            // 通知EOF
+            // Notify EOF to application (if configured).
             if (s->config.on_stream_data_eof) {
                 s->config.on_stream_data_eof(stream->user_data);
             }
@@ -1215,13 +1196,20 @@ static int processStreamFlags(struct yamux_session* s, struct yamux_stream* stre
     if (flags & YAMUX_FLAG_RST) {
         YAMUX_LOG("Processing RST for stream %u", stream->id);
         stream->state = YAMUX_STREAM_STATE_RST_RECEIVED;
-        // 通知流被重置
+        // Notify stream reset.
         if (s->config.on_stream_close) {
             s->config.on_stream_close(stream->user_data, true, YAMUX_ERR_CLOSED);
         }
-        // 释放流资源
+        // Free stream resources.
         remove_and_free_stream(s, stream->id, true, YAMUX_ERR_CLOSED);
     }
     
     return YAMUX_ERR_NONE;
+}
+
+// Function to get the ID of a stream
+uint32_t yamux_stream_get_id(yamux_stream_t* stream) {
+    if (!stream) return 0;
+    struct yamux_stream* s = (struct yamux_stream*)stream;
+    return s->id;
 }

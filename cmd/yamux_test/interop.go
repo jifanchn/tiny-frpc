@@ -1,3 +1,6 @@
+//go:build yamux_interop
+// +build yamux_interop
+
 package main
 
 /*
@@ -13,6 +16,14 @@ package main
 #include <fcntl.h>
 #include "yamux.h"
 #include "../../tiny-frpc/include/tools.h"
+
+// 方案B：默认安静；只有设置环境变量 TINY_FRPC_VERBOSE=1 才输出测试侧 C 调试日志
+static int interop_verbose_enabled(void) {
+    const char* v = getenv("TINY_FRPC_VERBOSE");
+    return (v && v[0] != '\0' && v[0] != '0');
+}
+#define ILOG(fmt, ...) do { if (interop_verbose_enabled()) { printf(fmt, ##__VA_ARGS__); fflush(stdout); } } while (0)
+#define IERR(fmt, ...) do { fprintf(stderr, fmt, ##__VA_ARGS__); fflush(stderr); } while (0)
 
 // Structure to hold persistent buffer state
 typedef struct {
@@ -46,16 +57,16 @@ static char g_received_data[1024];
 // 网络写入回调函数
 static int network_write_callback(void* ctx, const uint8_t* data, size_t len) {
     if (c_sockfd < 0) {
-        printf("C: 错误 - 套接字未初始化\n");
+        IERR("C: 错误 - 套接字未初始化\n");
         return -1;
     }
     
-    printf("C: 发送 %zu 字节数据到网络\n", len);
+    ILOG("C: 发送 %zu 字节数据到网络\n", len);
     int total_sent = 0;
     while (total_sent < len) {
         int sent = write(c_sockfd, data + total_sent, len - total_sent);
         if (sent <= 0) {
-            printf("C: 网络发送错误: %d\n", sent);
+            IERR("C: 网络发送错误: %d\n", sent);
             return -1;
         }
         total_sent += sent;
@@ -66,30 +77,30 @@ static int network_write_callback(void* ctx, const uint8_t* data, size_t len) {
 
 // 数据接收回调
 static int on_stream_data_received(void* stream_user_data, const uint8_t* data, size_t len) {
-    printf("C: 收到流数据，长度: %zu 字节\n", len);
+    ILOG("C: 收到流数据，长度: %zu 字节\n", len);
     if (len > 0 && len < sizeof(g_received_data)) {
         memcpy(g_received_data, data, len);
         g_data_received = len;
-        printf("C: 接收到的数据: %.*s\n", (int)len, g_received_data);
+        ILOG("C: 接收到的数据: %.*s\n", (int)len, g_received_data);
 
         // 使用全局会话和记录的流ID进行窗口更新 和 发送响应
         if (c_session != NULL && g_current_stream_id > 0) {
-            printf("C: 自动更新流 %u 的窗口，增加 %zu 字节\n", g_current_stream_id, len);
+            ILOG("C: 自动更新流 %u 的窗口，增加 %zu 字节\n", g_current_stream_id, len);
             yamux_stream_window_update(c_session, g_current_stream_id, (uint32_t)len);
 
             // 发送响应数据
             const char* response = "Pong from C Server!";
             size_t response_len = strlen(response);
-            printf("C: 服务端尝试为流 %u 发送响应: %s\n", g_current_stream_id, response);
+            ILOG("C: 服务端尝试为流 %u 发送响应: %s\n", g_current_stream_id, response);
             int written = yamux_stream_write(c_session, g_current_stream_id, (const uint8_t*)response, response_len);
             if (written < 0) {
-                printf("C: 服务端为流 %u 发送响应失败, 错误码: %d\n", g_current_stream_id, written);
+                IERR("C: 服务端为流 %u 发送响应失败, 错误码: %d\n", g_current_stream_id, written);
             } else {
-                printf("C: 服务端为流 %u 成功发送 %d 字节的响应\n", g_current_stream_id, written);
+                ILOG("C: 服务端为流 %u 成功发送 %d 字节的响应\n", g_current_stream_id, written);
             }
 
         } else {
-            printf("C: 无法更新窗口或发送响应：session=%p, stream_id=%u\n", 
+            ILOG("C: 无法更新窗口或发送响应：session=%p, stream_id=%u\n", 
                     c_session, g_current_stream_id);
         }
     }
@@ -98,22 +109,36 @@ static int on_stream_data_received(void* stream_user_data, const uint8_t* data, 
 
 // 流建立回调
 static void on_stream_established(void* stream_user_data) {
-    printf("C: on_stream_established CALLED (user_data: %p)\n", stream_user_data);
+    ILOG("C: on_stream_established CALLED (user_data: %p)\n", stream_user_data);
     g_stream_established = 1;
-    printf("C: g_stream_established SET to 1\n");
+    ILOG("C: g_stream_established SET to 1\n");
 }
 
 // 流关闭回调
 static void on_stream_closed(void* stream_user_data, bool by_remote, uint32_t error_code) {
-    printf("C: 流已关闭，远端关闭: %d, 错误码: %u\n", by_remote ? 1 : 0, error_code);
+    ILOG("C: 流已关闭，远端关闭: %d, 错误码: %u\n", by_remote ? 1 : 0, error_code);
 }
 
 // 新流回调
-static bool on_new_stream(void* session_ctx, uint32_t stream_id, void** stream_user_data) {
-    printf("C: 收到新流请求，ID: %u\n", stream_id);
+static int on_new_stream(void* session_user_data, yamux_stream_t** p_stream, void** p_stream_user_data_out) {
+    (void)session_user_data;
+    if (p_stream == NULL || *p_stream == NULL) {
+        IERR("C: 错误 - on_new_stream 收到空 stream 指针\n");
+        return 0; // reject
+    }
+
+    uint32_t stream_id = yamux_stream_get_id(*p_stream);
+    ILOG("C: 收到新流请求，ID: %u\n", stream_id);
+
     // 记录流ID到全局变量
     g_current_stream_id = stream_id;
-    return true;
+
+    // 当前测试主要通过全局 stream_id 驱动，不依赖 stream_user_data
+    if (p_stream_user_data_out) {
+        *p_stream_user_data_out = NULL;
+    }
+
+    return 1; // accept
 }
 
 // 创建yamux会话
@@ -145,43 +170,43 @@ static yamux_session_t* create_interop_session(int sockfd, bool is_client) {
 // 从套接字读取数据并送入yamux会话处理
 static int process_network_data(yamux_session_t* session, int sockfd) {
     if (session == NULL || sockfd < 0) {
-        printf("C: PND 错误 - 无效的会话或套接字\n");
+        IERR("C: PND 错误 - 无效的会话或套接字\n");
         return -1;
     }
-    printf("C: PND Entry - sockfd: %d, c_recv_buffer.len: %zu\n", sockfd, c_recv_buffer.len);
+    ILOG("C: PND Entry - sockfd: %d, c_recv_buffer.len: %zu\n", sockfd, c_recv_buffer.len);
     
     // Read new data into a temporary space at the end of the persistent buffer
     ssize_t bytes_read = 0;
     if (c_recv_buffer.len < c_recv_buffer.capacity) {
-        printf("C: PND - Attempting to read from sockfd %d. Buffer available: %zu\n", sockfd, c_recv_buffer.capacity - c_recv_buffer.len);
+        ILOG("C: PND - Attempting to read from sockfd %d. Buffer available: %zu\n", sockfd, c_recv_buffer.capacity - c_recv_buffer.len);
         bytes_read = read(sockfd, c_recv_buffer.buffer + c_recv_buffer.len, 
                           c_recv_buffer.capacity - c_recv_buffer.len);
-        printf("C: PND - read() returned %zd\n", bytes_read);
+        ILOG("C: PND - read() returned %zd\n", bytes_read);
     } else {
-        printf("C: PND - Persistent buffer full (len %zu, capacity %zu). No read attempt.\n", c_recv_buffer.len, c_recv_buffer.capacity);
+        ILOG("C: PND - Persistent buffer full (len %zu, capacity %zu). No read attempt.\n", c_recv_buffer.len, c_recv_buffer.capacity);
     }
 
     if (bytes_read < 0) {
         // EAGAIN or EWOULDBLOCK means no data right now, not a fatal error for this function
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            printf("C: PND - 网络读取无数据 (EAGAIN/EWOULDBLOCK, errno: %d)\n", errno);
+            ILOG("C: PND - 网络读取无数据 (EAGAIN/EWOULDBLOCK, errno: %d)\n", errno);
             // If there's already data in the buffer, try to process that
             if (c_recv_buffer.len > 0) {
-                printf("C: PND - EAGAIN but data exists in buffer (%zu bytes). Proceeding to process.\n", c_recv_buffer.len);
+                ILOG("C: PND - EAGAIN but data exists in buffer (%zu bytes). Proceeding to process.\n", c_recv_buffer.len);
                 // Fall through to process existing data
             } else {
                 return 0; // No new data, no old data, nothing to do
             }
         } else {
-            printf("C: PND - 网络读取错误: %s (errno %d)\n", strerror(errno), errno);
+            IERR("C: PND - 网络读取错误: %s (errno %d)\n", strerror(errno), errno);
             return -1; // Real read error
         }
     } else if (bytes_read == 0) {
         // Connection closed by peer
-        printf("C: PND - 网络连接由对端关闭 (read returned 0)\n");
+        ILOG("C: PND - 网络连接由对端关闭 (read returned 0)\n");
         // If there's already data in the buffer, try to process that last bit
         if (c_recv_buffer.len > 0) {
-             printf("C: PND - EOF but data exists in buffer (%zu bytes). Proceeding to process.\n", c_recv_buffer.len);
+             ILOG("C: PND - EOF but data exists in buffer (%zu bytes). Proceeding to process.\n", c_recv_buffer.len);
             // Fall through to process existing data
         } else {
             return -1; // Connection closed and no data left
@@ -189,21 +214,21 @@ static int process_network_data(yamux_session_t* session, int sockfd) {
     } else {
         // Successfully read some data
         c_recv_buffer.len += bytes_read;
-        printf("C: PND - 从网络读取 %zd 字节, 缓冲区现有 %zu 字节\n", bytes_read, c_recv_buffer.len);
+        ILOG("C: PND - 从网络读取 %zd 字节, 缓冲区现有 %zu 字节\n", bytes_read, c_recv_buffer.len);
     }
 
     if (c_recv_buffer.len == 0) {
-        printf("C: PND - No data in buffer to process. Returning 0.\n");
+        ILOG("C: PND - No data in buffer to process. Returning 0.\n");
         return 0; // Nothing to process
     }
 
     // Process data from the persistent buffer
-    printf("C: PND - Calling yamux_session_receive with buffer len %zu\n", c_recv_buffer.len);
+    ILOG("C: PND - Calling yamux_session_receive with buffer len %zu\n", c_recv_buffer.len);
     int processed_now = yamux_session_receive(session, c_recv_buffer.buffer, c_recv_buffer.len);
-    printf("C: PND - yamux_session_receive 处理了 %d 字节 (缓冲区总长 %zu)\n", processed_now, c_recv_buffer.len);
+    ILOG("C: PND - yamux_session_receive 处理了 %d 字节 (缓冲区总长 %zu)\n", processed_now, c_recv_buffer.len);
 
     if (processed_now < 0) {
-        printf("C: PND - yamux_session_receive 错误: %d\n", processed_now);
+        IERR("C: PND - yamux_session_receive 错误: %d\n", processed_now);
         // Do not shift buffer on error, let yamux handle session state
         return processed_now; // Propagate error
     }
@@ -212,16 +237,16 @@ static int process_network_data(yamux_session_t* session, int sockfd) {
         // Shift unprocessed data to the beginning of the buffer
         memmove(c_recv_buffer.buffer, c_recv_buffer.buffer + processed_now, c_recv_buffer.len - processed_now);
         c_recv_buffer.len -= processed_now;
-        printf("C: PND - 缓冲区移位后，剩余 %zu 字节\n", c_recv_buffer.len);
+        ILOG("C: PND - 缓冲区移位后，剩余 %zu 字节\n", c_recv_buffer.len);
     } else if ((size_t)processed_now > c_recv_buffer.len) {
         // This should not happen if yamux_session_receive is correct
-        printf("C: PND - 严重错误 - yamux_session_receive 处理的字节数 (%d) 大于缓冲区长度 (%zu)\n", processed_now, c_recv_buffer.len);
+        IERR("C: PND - 严重错误 - yamux_session_receive 处理的字节数 (%d) 大于缓冲区长度 (%zu)\n", processed_now, c_recv_buffer.len);
         c_recv_buffer.len = 0; // Reset buffer to avoid further issues
         return -1; // Indicate a critical error
     }
     // If processed_now == 0 and there was data, it means yamux needs more data for a full frame.
     // The existing data remains in the buffer for the next call.
-    printf("C: PND - Returning %d (processed_now)\n", processed_now);
+    ILOG("C: PND - Returning %d (processed_now)\n", processed_now);
     return processed_now; // Return bytes processed in this call (by yamux_session_receive)
 }
 
@@ -233,20 +258,20 @@ static uint32_t test_open_and_send(yamux_session_t* session, const char* data) {
     // 将 session 指针用作 user_data
     void* user_data_for_stream = (void*)session;
     
-    printf("C: 打开新流... (将使用 session %p 作为 user_data)\n", user_data_for_stream);
+    ILOG("C: 打开新流... (将使用 session %p 作为 user_data)\n", user_data_for_stream);
     // 传递 user_data_for_stream 的地址
     uint32_t stream_id = yamux_session_open_stream(session, &user_data_for_stream);
     if (stream_id == 0) {
-        printf("C: 打开流失败\n");
+        IERR("C: 打开流失败\n");
         return 0;
     }
     
     // 设置全局流ID
     g_current_stream_id = stream_id;
     // 注意：此时 stream 结构体内部的 user_data 应该已经被设置为 session 指针
-    printf("C: 流ID %u 已创建，已设置为当前活动流\n", stream_id);
+    ILOG("C: 流ID %u 已创建，已设置为当前活动流\n", stream_id);
     
-    printf("C: 等待流建立...\n");
+    ILOG("C: 等待流建立...\n");
     int wait_count = 0;
     while (!g_stream_established && wait_count < 50) {
         usleep(100000);
@@ -255,15 +280,15 @@ static uint32_t test_open_and_send(yamux_session_t* session, const char* data) {
     }
     
     if (!g_stream_established) {
-        printf("C: 等待流建立超时\n");
+        IERR("C: 等待流建立超时\n");
         yamux_stream_close(session, stream_id, 0);
         return 0;
     }
     
     if (data) {
-        printf("C: 发送数据: %s\n", data);
+        ILOG("C: 发送数据: %s\n", data);
         int result = yamux_stream_write(session, stream_id, (const uint8_t*)data, strlen(data));
-        printf("C: 数据发送结果: %d\n", result);
+        ILOG("C: 数据发送结果: %d\n", result);
     }
     
     return stream_id;
@@ -286,6 +311,23 @@ import (
 
     "github.com/hashicorp/yamux"
 )
+
+// E2E reconnect/lifecycle regression: run multiple cycles in one process to catch
+// global state leaks, FD leaks, and session/stream lifecycle issues.
+const interopReconnectCycles = 5
+
+func runCycles(name string, cycles int, fn func() bool) bool {
+	ok := true
+	for i := 0; i < cycles; i++ {
+		fmt.Printf("\n--- %s 重连循环 %d/%d ---\n", name, i+1, cycles)
+		if !fn() {
+			ok = false
+		}
+		// Give goroutines/FDs a moment to settle before next cycle.
+		time.Sleep(50 * time.Millisecond)
+	}
+	return ok
+}
 
 // 创建TCP服务器并返回监听器
 func createTCPServer(addr string) (net.Listener, error) {
@@ -399,9 +441,12 @@ func testGoClientToCServer() bool {
             // fmt.Printf("C: 服务端 process_network_data 返回: %d\n", result) // Can be noisy
 
             if result < 0 {
-                // process_network_data returns -1 on connection closed or real read error.
-                // It returns specific negative yamux error codes for protocol errors.
-                fmt.Printf("C: 服务端 process_network_data 返回错误 %d, 可能连接已关闭或发生错误. 退出处理循环.\n", result);
+                // process_network_data returns -1 on EOF/connection closed, or negative yamux error codes on protocol errors.
+                if result == -1 {
+                    fmt.Println("C: 服务端检测到连接关闭(EOF)，退出处理循环")
+                } else {
+                    fmt.Printf("C: 服务端 process_network_data 返回错误 %d，退出处理循环\n", result)
+                }
                 return;
             }
             // If result == 0 (no data read, no data in buffer), sleep briefly.
@@ -480,6 +525,10 @@ func testGoClientToCServer() bool {
         fmt.Printf("Go: 客户端收到响应: '%s'\n", string(buf[:n]))
     }
 
+    // 主动关闭客户端侧资源，让 C 服务端能尽快读到 EOF 并退出处理循环（避免“select timeout”误导性日志）
+    _ = stream.Close()
+    _ = goSession.Close()
+    _ = clientConn.Close()
 
     // 等待C服务端处理完成 (通过cServerProcessDone channel)
     fmt.Println("Go: 客户端等待C服务端处理完成...")
@@ -659,16 +708,18 @@ func testCClientToGoServer() bool {
 }
 
 func main() {
+    // Ensure LLVM coverage profile is flushed (only active with -tags=covflush).
+    defer flushCoverage()
+
     fmt.Println("开始运行yamux互操作性测试套件...")
     
     success := true
     
-    // 运行所有测试
-    if !testGoClientToCServer() {
+    // 运行所有测试（包含重连/重复生命周期）
+    if !runCycles("Go客户端 -> C服务端", interopReconnectCycles, testGoClientToCServer) {
         success = false
     }
-    
-    if !testCClientToGoServer() {
+    if !runCycles("C客户端 -> Go服务端", interopReconnectCycles, testCClientToGoServer) {
         success = false
     }
     

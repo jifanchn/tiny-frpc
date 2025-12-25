@@ -5,6 +5,13 @@
 #include <stddef.h> // For size_t
 #include <stdbool.h> // For bool type
 
+// Forward declare yamux_stream_t for use in yamux_config_t
+// Full typedef will be later, but this allows pointers in the config struct.
+// typedef struct yamux_stream yamux_stream_t; // Original position, moved up
+
+// Yamux Stream - Forward declaration needed for config struct below
+typedef struct yamux_stream yamux_stream_t;
+
 // Default yamux version
 #define YAMUX_VERSION 0
 
@@ -28,6 +35,18 @@
 // Standard frame header size
 #define YAMUX_FRAME_HEADER_SIZE 12
 
+// Error codes returned by yamux APIs (negative on error)
+#define YAMUX_ERR_NONE       0
+#define YAMUX_ERR_INVALID   -1
+#define YAMUX_ERR_MEM       -2
+#define YAMUX_ERR_PROTO     -3
+#define YAMUX_ERR_IO        -4
+#define YAMUX_ERR_EOF       -5
+#define YAMUX_ERR_CLOSED    -6
+#define YAMUX_ERR_TIMEOUT   -7
+#define YAMUX_ERR_NOTFOUND  -8
+#define YAMUX_ERR_WINDOW    -9
+
 // Yamux configuration
 typedef struct yamux_config_s {
     bool accept_backlog;            // TODO: Define usage
@@ -39,7 +58,7 @@ typedef struct yamux_config_s {
     uint32_t max_streams;           // Maximum number of concurrent streams
     // Callback for accepting a new stream (server side)
     // Returns true if accepted, false if rejected (will send RST)
-    bool (*on_new_stream)(void* session_ctx, uint32_t stream_id, void** stream_user_data);
+    int (*on_new_stream)(void* session_user_data, yamux_stream_t** p_stream, void** p_stream_user_data_out);
     // Callback for when a stream receives data
     // Returns number of bytes processed, or < 0 on error (will send RST)
     int (*on_stream_data)(void* stream_user_data, const uint8_t* data, size_t len);
@@ -77,9 +96,11 @@ typedef struct {
 // Yamux Session
 typedef struct yamux_session yamux_session_t;
 
-// Yamux Stream
-typedef struct yamux_stream yamux_stream_t;
+// Yamux Stream - This is the original position of the typedef
+// typedef struct yamux_stream yamux_stream_t; // MOVED UP
 
+// Function to get the ID of a stream
+uint32_t yamux_stream_get_id(yamux_stream_t* stream);
 
 // Session management
 // Creates a new yamux session.

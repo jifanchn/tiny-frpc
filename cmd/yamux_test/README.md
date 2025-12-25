@@ -1,133 +1,56 @@
-# YAMUX 测试套件
+# Yamux test suite
 
-本目录包含了YAMUX协议的完整测试套件，用于验证C语言实现的YAMUX协议的正确性和与Go语言实现的互操作性。
+This directory contains the CGO-based test suite that validates the C Yamux implementation against a Go Yamux peer.
 
-## 测试文件说明
+## Test files
 
-### 1. yamux_basic_test.go
+### 1) `basic.go`
 
-基础功能测试，使用纯C实现进行自测试。
+Basic functionality tests:
 
-测试内容：
-- 会话创建和释放
-  * 验证会话结构的正确初始化
-  * 验证内存正确释放
-- 基本流操作
-  * 打开新流
-  * 发送数据
-  * 关闭流
-- 会话配置
-  * keepalive设置
-  * 窗口大小设置
-  * 最大流数量限制
+- Session creation and teardown
+- Stream lifecycle (open, write, read, close)
+- Session configuration sanity checks (keepalive, windows, max streams)
 
-### 2. yamux_protocol_test.go
+### 2) `protocol.go`
 
-协议特性测试，验证YAMUX协议的核心功能。
+Protocol feature tests:
 
-测试内容：
-- PING/PONG测试
-  * 自动心跳机制
-  * 手动PING请求
-  * PONG响应处理
-- 流控制测试
-  * 发送大量数据触发窗口更新
-  * 验证窗口更新帧
-  * 确保流量控制正常工作
-- GOAWAY测试
-  * 正常会话终止
-  * 错误情况下的会话终止
-  * GOAWAY帧处理
+- Ping/Pong semantics (keepalive, RTT)
+- Flow control (window updates)
+- GoAway handling (graceful shutdown)
 
-### 3. yamux_interop_test.go
+### 3) `interop.go`
 
-互操作性测试，验证C实现与Go实现的互操作性。
+Interoperability tests (C ↔ Go):
 
-测试场景：
-1. Go客户端 -> C服务端
-   - Go使用官方yamux库创建客户端
-   - C实现作为服务端接收连接
-   - 测试内容：
-     * 连接建立
-     * 流创建
-     * 数据传输
-     * 流关闭
-     * 会话终止
+1. Go client → C server
+2. C client → Go server
 
-2. C客户端 -> Go服务端
-   - C实现作为客户端发起连接
-   - Go使用官方yamux库作为服务端
-   - 测试内容：
-     * 连接建立
-     * 流创建
-     * 数据传输
-     * 流关闭
-     * 会话终止
+Each scenario validates:
 
-## 测试数据流
+- Session establishment
+- Stream creation
+- Data transfer
+- Stream close
+- Session close / GoAway
 
-```
-Go客户端测试:
-[Go Client] ----> TCP连接 ----> [C Server]
-     |                              |
-     |-- OpenStream() ---------->   |
-     |-- Write("Hello") ------->    |
-     |                          处理数据
-     |   <------------------- 响应数据
-     |-- Close() -------------->    |
+## Running the suite
 
-C客户端测试:
-[C Client] ----> TCP连接 ----> [Go Server]
-     |                              |
-     |-- OpenStream() ---------->   |
-     |-- Write("Hello") ------->    |
-     |                          处理数据
-     |   <------------------- 响应数据
-     |-- Close() -------------->    |
-```
-
-## 运行测试
+From the repository root:
 
 ```bash
-# 运行所有测试
 make yamux-test
-
-# 单独运行基础测试
-go run yamux_basic_test.go
-
-# 单独运行协议测试
-go run yamux_protocol_test.go
-
-# 单独运行互操作性测试
-go run yamux_interop_test.go
 ```
 
-## 测试覆盖的协议特性
+The Makefile builds the executables into `build/` and runs them:
 
-1. 会话管理
-   - 会话建立
-   - 会话配置
-   - 会话终止
+- `build/yamux_basic_test`
+- `build/yamux_protocol_test`
+- `build/yamux_interop_test`
 
-2. 流控制
-   - 流创建
-   - 数据传输
-   - 窗口更新
-   - 流关闭
+## Notes
 
-3. 心跳机制
-   - 自动心跳
-   - PING/PONG
-
-4. 错误处理
-   - 连接错误
-   - 流错误
-   - GOAWAY处理
-
-## 注意事项
-
-1. 测试前确保C库已经正确编译
-2. 测试使用本地回环地址进行网络通信
-3. 部分测试可能需要较长时间等待（如心跳测试）
-4. 所有测试都包含详细的日志输出
-5. 测试失败会提供具体的错误信息 
+- Run `make all` first to ensure the C static libraries are up to date.
+- The tests use loopback networking for deterministic behavior.
+- Use `V=1` (and optionally `TINY_FRPC_VERBOSE=1`) to get more logs when debugging.
