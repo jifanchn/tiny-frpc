@@ -152,7 +152,7 @@ static int on_new_stream_wrapper(void* session_user_data, yamux_stream_t** p_str
             if (frpc_stcp_verbose_enabled()) {
                 fprintf(stderr, "[%llu] SERVER Warning: STCP Server proxy '%s' already has active stream %u, rejecting new stream %u\n",
                         ts, proxy->config.proxy_name, proxy->active_stream_id, (p_stream && *p_stream ? yamux_stream_get_id(*p_stream) : 0));
-                fprintf(stdout, "[%llu] SERVER: EXITING on_new_stream_wrapper (rejecting stream - already active)\n", ts);
+                fprintf(stdout, "[%llu] SERVER: EXITING on_new_stream_wrapper (rejecting stream - already active)\n", (unsigned long long)ts);
             }
              return 0;
         }
@@ -164,7 +164,7 @@ static int on_new_stream_wrapper(void* session_user_data, yamux_stream_t** p_str
         if (frpc_stcp_verbose_enabled()) {
             fprintf(stdout, "[%llu] SERVER: STCP Server: Accepted new stream ID %u, set as active. stream_user_data_out set to %p. Waiting for establishment.\n",
                     ts, proxy->active_stream_id, *p_stream_user_data_out);
-            fprintf(stdout, "[%llu] SERVER: EXITING on_new_stream_wrapper (accepting stream)\n", ts);
+            fprintf(stdout, "[%llu] SERVER: EXITING on_new_stream_wrapper (accepting stream)\n", (unsigned long long)ts);
         }
         return 1;
     } else {
@@ -174,7 +174,7 @@ static int on_new_stream_wrapper(void* session_user_data, yamux_stream_t** p_str
         }
         if (p_stream_user_data_out) *p_stream_user_data_out = NULL;
         if (frpc_stcp_verbose_enabled()) {
-            fprintf(stdout, "[%llu] SERVER: EXITING on_new_stream_wrapper (rejecting stream - wrong role)\n", ts);
+            fprintf(stdout, "[%llu] SERVER: EXITING on_new_stream_wrapper (rejecting stream - wrong role)\n", (unsigned long long)ts);
         }
         return 0;
     }
@@ -811,7 +811,7 @@ int frpc_stcp_receive(frpc_stcp_proxy_t* proxy, const uint8_t* data, size_t len)
     }
     
     if (!proxy->is_started) {
-        fprintf(stderr, "[%llu] %s PROXY '%s': Error: STCP proxy not started in frpc_stcp_receive\n", ts, proxy_role_str, proxy->config.proxy_name);
+        fprintf(stderr, "[%llu] %s PROXY '%s': Error: STCP proxy not started in frpc_stcp_receive\n", (unsigned long long)ts, proxy_role_str, proxy->config.proxy_name);
         return FRPC_ERROR_INTERNAL;
     }
         
