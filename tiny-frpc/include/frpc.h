@@ -5,19 +5,19 @@
 #include <stddef.h>
 #include <stdbool.h>
 
-// FRP客户端配置结构体
+// FRP client configuration structure
 typedef struct frpc_config_s {
-    const char* server_addr;       // FRP服务器地址
-    uint16_t server_port;          // FRP服务器端口
-    const char* token;             // 认证令牌（如果需要）
-    uint32_t heartbeat_interval;   // 心跳间隔（秒）
-    bool tls_enable;               // 是否启用TLS
+    const char* server_addr;       // FRP server address
+    uint16_t server_port;          // FRP server port
+    const char* token;             // Authentication token (if required)
+    uint32_t heartbeat_interval;   // Heartbeat interval (seconds)
+    bool tls_enable;               // Whether to enable TLS
 } frpc_config_t;
 
-// FRP客户端实例（不透明指针）
+// FRP client instance (opaque pointer)
 typedef struct frpc_client frpc_client_t;
 
-// 错误码
+// Error codes
 enum frpc_error_code {
     FRPC_SUCCESS = 0,
     FRPC_ERROR_INVALID_PARAM = -1,
@@ -26,32 +26,39 @@ enum frpc_error_code {
     FRPC_ERROR_AUTH = -4,
     FRPC_ERROR_TIMEOUT = -5,
     FRPC_ERROR_PROTO = -6,
-    FRPC_ERROR_INTERNAL = -7
+    FRPC_ERROR_INTERNAL = -7,
+    FRPC_ERROR_CONNECTION_CLOSED = -8,
+    FRPC_ERROR_CONNECTION_CLOSED_BY_REMOTE = -9,
+    FRPC_ERROR_STREAM_NOT_WRITABLE = -10 // Corresponds to yamux -6
 };
 
-// 回调函数类型
-// 当网络事件（连接、断开等）发生时调用
+// Callback function types
+// Called when network events (connect, disconnect, etc.) occur
 typedef void (*frpc_event_callback)(void* user_ctx, int event_type, void* event_data);
 
-// 创建FRP客户端实例
+// Create FRP client instance
 frpc_client_t* frpc_client_new(const frpc_config_t* config, void* user_ctx);
 
-// 释放FRP客户端实例
+// Free FRP client instance
 void frpc_client_free(frpc_client_t* client);
 
-// 连接到FRP服务器
+// Connect to FRP server
 int frpc_client_connect(frpc_client_t* client);
 
-// 断开与FRP服务器的连接
+// Disconnect from FRP server
 int frpc_client_disconnect(frpc_client_t* client);
 
-// 处理接收到的数据
+// Handle received data
 int frpc_client_receive(frpc_client_t* client, const uint8_t* data, size_t len);
 
-// 定期调用以处理心跳等定时任务
+// Called periodically to handle heartbeat and other timed tasks
 int frpc_client_tick(frpc_client_t* client);
 
-// 设置事件回调
+// Set event callback
 void frpc_client_set_event_callback(frpc_client_t* client, frpc_event_callback callback);
+
+// Send Yamux frame bytes (used by Yamux write_fn)
+// These bytes are sent to the frps connection, frps routes them to the work conn peer
+int frpc_client_send_yamux_frame_bytes(frpc_client_t* client, const uint8_t* data, size_t len);
 
 #endif // FRPC_H 

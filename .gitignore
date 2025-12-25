@@ -1,1 +1,28 @@
 .cursorrules
+.build
+.build/*
+build/
+build/*
+build-cov/
+build-cov/*
+.DS_Store
+.vscode
+.kiro/
+*.profraw
+*.profdata
+coverage.info
+
+# Python virtual environment
+venv/
+
+# IDE files
+.idea/
+*.swp
+*.swo
+
+# Bindings build artifacts
+bindings/nodejs/build/
+bindings/nodejs/node_modules/
+bindings/nodejs/*.node
+bindings/rust/target/
+bindings/python/__pycache__/

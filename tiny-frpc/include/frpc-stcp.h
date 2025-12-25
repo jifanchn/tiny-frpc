@@ -4,83 +4,83 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
-#include "frpc.h"   // 包含基本FRP客户端定义
-#include "yamux.h"  // 包含yamux会话和流定义
+#include "frpc.h"   // Include basic FRP client definitions
+#include "yamux.h"  // Include yamux session and stream definitions
 
-// STCP代理类型
+// STCP proxy role types
 typedef enum {
-    FRPC_STCP_ROLE_SERVER = 0,  // STCP服务端
-    FRPC_STCP_ROLE_VISITOR = 1  // STCP访问端
+    FRPC_STCP_ROLE_SERVER = 0,  // STCP server
+    FRPC_STCP_ROLE_VISITOR = 1  // STCP visitor
 } frpc_stcp_role_t;
 
-// STCP代理配置
+// STCP proxy configuration
 typedef struct frpc_stcp_config_s {
-    frpc_stcp_role_t role;       // 代理角色（服务端或访问端）
-    const char* proxy_name;      // 代理名称
-    const char* sk;              // 共享密钥
+    frpc_stcp_role_t role;       // Proxy role (server or visitor)
+    const char* proxy_name;      // Proxy name
+    const char* sk;              // Shared secret key
     
-    // 服务端特有配置
-    const char* local_addr;      // 本地服务地址
-    uint16_t local_port;         // 本地服务端口
+    // Server-specific configuration
+    const char* local_addr;      // Local service address
+    uint16_t local_port;         // Local service port
     
-    // 访问端特有配置
-    const char* server_name;     // 要连接的服务端名称
-    const char* bind_addr;       // 本地绑定地址
-    uint16_t bind_port;          // 本地绑定端口
+    // Visitor-specific configuration
+    const char* server_name;     // Name of the server to connect to
+    const char* bind_addr;       // Local bind address
+    uint16_t bind_port;          // Local bind port
     
-    // 回调函数
+    // Callback functions
     int (*on_data)(void* user_ctx, uint8_t* data, size_t len);
     int (*on_write)(void* user_ctx, uint8_t* data, size_t len);
     void (*on_connection)(void* user_ctx, int connected, int error_code);
 } frpc_stcp_config_t;
 
-// STCP代理实例（不透明指针）
+// STCP proxy instance (opaque pointer)
 typedef struct frpc_stcp_proxy frpc_stcp_proxy_t;
 
-// 创建STCP代理
+// Create STCP proxy
 frpc_stcp_proxy_t* frpc_stcp_proxy_new(frpc_client_t* client, 
                                        const frpc_stcp_config_t* config, 
                                        void* user_ctx);
 
-// 释放STCP代理
+// Free STCP proxy
 void frpc_stcp_proxy_free(frpc_stcp_proxy_t* proxy);
 
-// 启动STCP代理
+// Start STCP proxy
 int frpc_stcp_proxy_start(frpc_stcp_proxy_t* proxy);
 
-// 停止STCP代理
+// Stop STCP proxy
 int frpc_stcp_proxy_stop(frpc_stcp_proxy_t* proxy);
 
-// 发送数据（针对访问端）
+// Send data (for visitor)
 int frpc_stcp_send(frpc_stcp_proxy_t* proxy, const uint8_t* data, size_t len);
 
-// 接收数据处理
+// Handle received data
 int frpc_stcp_receive(frpc_stcp_proxy_t* proxy, const uint8_t* data, size_t len);
 
-// 处理定期任务
+// Handle periodic tasks
 int frpc_stcp_tick(frpc_stcp_proxy_t* proxy);
 
-// Visitor特有接口
-// 建立与服务器的连接
+// Visitor-specific interface
+// Establish connection to server
 int frpc_stcp_visitor_connect(frpc_stcp_proxy_t* proxy);
 
-// 关闭与服务器的连接
+// Close connection to server
 int frpc_stcp_visitor_disconnect(frpc_stcp_proxy_t* proxy);
 
-// Server特有接口
-// 注册本地服务
+// Server-specific interface
+// Register local service
 int frpc_stcp_server_register(frpc_stcp_proxy_t* proxy);
 
-// 设置允许连接的用户列表
+// Set allowed user list
 int frpc_stcp_server_set_allow_users(frpc_stcp_proxy_t* proxy, const char** users, size_t count);
 
-// 设置数据传输参数
+// Data transport configuration
 typedef struct frpc_stcp_transport_config_s {
-    bool use_encryption;         // 是否使用加密
-    bool use_compression;        // 是否使用压缩
+    bool use_encryption;         // Whether to use encryption
+    bool use_compression;        // Whether to use compression
 } frpc_stcp_transport_config_t;
 
-// 设置传输配置
+// Set transport configuration
 int frpc_stcp_set_transport_config(frpc_stcp_proxy_t* proxy, const frpc_stcp_transport_config_t* config);
 
 #endif // FRPC_STCP_H 

@@ -5,31 +5,43 @@
 #include <string.h>
 #include <time.h>
 
-// STCP代理结构体定义
+// Quiet by default; set TINY_FRPC_VERBOSE=1 to enable extra debug logs.
+static int frpc_stcp_verbose_enabled(void) {
+    static int inited = 0;
+    static int enabled = 0;
+    if (!inited) {
+        const char* v = getenv("TINY_FRPC_VERBOSE");
+        enabled = (v && v[0] != '\0' && v[0] != '0');
+        inited = 1;
+    }
+    return enabled;
+}
+
+// STCP proxy structure
 struct frpc_stcp_proxy {
     frpc_stcp_config_t config;
     frpc_client_t* client;
     void* user_ctx;
     
-    // yamux相关字段
+    // Yamux-related fields
     yamux_session_t* yamux_session;
     uint32_t active_stream_id;
     
-    // 传输配置
+    // Transport config
     bool use_encryption;
     bool use_compression;
     
-    // 服务端特有字段
+    // Server-only fields
     char** allow_users;
     size_t allow_users_count;
     
-    // 状态标志
+    // State flags
     bool is_started;
     bool is_connected;
-    bool is_registered;    // 对于server，表示是否已注册到frps
+    bool is_registered;    // server role: whether it has been registered to frps
 };
 
-// 创建STCP代理
+// Create an STCP proxy
 frpc_stcp_proxy_t* frpc_stcp_proxy_new(frpc_client_t* client, 
                                        const frpc_stcp_config_t* config, 
                                        void* user_ctx) {
@@ -49,7 +61,7 @@ frpc_stcp_proxy_t* frpc_stcp_proxy_new(frpc_client_t* client,
     proxy->client = client;
     proxy->user_ctx = user_ctx;
     
-    // 复制字符串字段
+    // Duplicate string fields
     proxy->config.proxy_name = strdup(config->proxy_name);
     proxy->config.sk = strdup(config->sk);
     
@@ -69,23 +81,23 @@ frpc_stcp_proxy_t* frpc_stcp_proxy_new(frpc_client_t* client,
     return proxy;
 }
 
-// 释放STCP代理
+// Free an STCP proxy
 void frpc_stcp_proxy_free(frpc_stcp_proxy_t* proxy) {
     if (!proxy) return;
     
-    // 先停止代理
+    // Stop the proxy first
     if (proxy->is_started) {
         frpc_stcp_proxy_stop(proxy);
     }
     
-    // 释放复制的字符串
+    // Free duplicated strings
     if (proxy->config.proxy_name) free((void*)proxy->config.proxy_name);
     if (proxy->config.sk) free((void*)proxy->config.sk);
     
     if (proxy->config.role == FRPC_STCP_ROLE_SERVER) {
         if (proxy->config.local_addr) free((void*)proxy->config.local_addr);
         
-        // 释放允许的用户列表
+        // Free allow-users list
         if (proxy->allow_users) {
             for (size_t i = 0; i < proxy->allow_users_count; i++) {
                 if (proxy->allow_users[i]) {
@@ -102,24 +114,80 @@ void frpc_stcp_proxy_free(frpc_stcp_proxy_t* proxy) {
     free(proxy);
 }
 
-// 生成身份验证密钥
-// 模拟 util.GetAuthKey(sk, timestamp)
-static char* get_auth_key(const char* sk, int64_t timestamp) {
-    // 简化版本，实际应该使用加密哈希
-    // 对应 Go 代码中的 util.GetAuthKey 函数
-    char* buffer = (char*)malloc(128);
-    if (!buffer) return NULL;
-    
-    snprintf(buffer, 128, "%s%lld", sk, timestamp);
-    return buffer;
+// Compute visitor sign key (equivalent to Go: util.GetAuthKey(sk, timestamp)).
+static int stcp_get_sign_key(const char* sk, int64_t timestamp, char out_hex[33]) {
+    return tools_get_auth_key(sk, timestamp, out_hex);
 }
 
-// Yamux会话相关回调函数
-static int on_stream_data_wrapper(void* user_data, const uint8_t* data, size_t len) {
-    frpc_stcp_proxy_t* proxy = (frpc_stcp_proxy_t*)user_data;
-    if (!proxy) return -1;
+// Yamux session callbacks
+
+// NEW: Callback for new streams (primarily for server role)
+static int on_new_stream_wrapper(void* session_user_data, yamux_stream_t** p_stream, void** p_stream_user_data_out) {
+    if (frpc_stcp_verbose_enabled()) {
+        fprintf(stderr, "SERVER: ENTERED on_new_stream_wrapper. session_user_data: %p, p_stream_val_at_addr: %p, input_stream_addr: %p",
+            session_user_data,
+            (void*)(p_stream ? *p_stream : NULL),
+            (void*)p_stream);
+        if (p_stream && *p_stream) {
+            fprintf(stderr, ", stream_id: %u", yamux_stream_get_id(*p_stream));
+        }
+        fprintf(stderr, "\n");
+        fflush(stderr);
+    }
+
+    frpc_stcp_proxy_t* proxy = NULL;
+    if (session_user_data) {
+        proxy = (frpc_stcp_proxy_t*)session_user_data;
+    }
+
+    uint64_t ts = tools_get_time_ms();
+
+    if (frpc_stcp_verbose_enabled()) {
+        fprintf(stdout, "[%llu] SERVER: Yamux: New incoming stream ID %u for STCP proxy '%s' (role: %d)\n",
+                ts, (p_stream && *p_stream ? yamux_stream_get_id(*p_stream) : 0), proxy ? proxy->config.proxy_name : "NULL_PROXY", proxy ? proxy->config.role : -1);
+    }
+
+    if (proxy && proxy->config.role == FRPC_STCP_ROLE_SERVER) {
+        if (proxy->active_stream_id != 0 && proxy->active_stream_id != (p_stream && *p_stream ? yamux_stream_get_id(*p_stream) : 0)) {
+            if (frpc_stcp_verbose_enabled()) {
+                fprintf(stderr, "[%llu] SERVER Warning: STCP Server proxy '%s' already has active stream %u, rejecting new stream %u\n",
+                        ts, proxy->config.proxy_name, proxy->active_stream_id, (p_stream && *p_stream ? yamux_stream_get_id(*p_stream) : 0));
+                fprintf(stdout, "[%llu] SERVER: EXITING on_new_stream_wrapper (rejecting stream - already active)\n", ts);
+            }
+             return 0;
+        }
+        
+        proxy->active_stream_id = (p_stream && *p_stream ? yamux_stream_get_id(*p_stream) : 0);
+        *p_stream_user_data_out = proxy; 
+        proxy->is_connected = false; 
+
+        if (frpc_stcp_verbose_enabled()) {
+            fprintf(stdout, "[%llu] SERVER: STCP Server: Accepted new stream ID %u, set as active. stream_user_data_out set to %p. Waiting for establishment.\n",
+                    ts, proxy->active_stream_id, *p_stream_user_data_out);
+            fprintf(stdout, "[%llu] SERVER: EXITING on_new_stream_wrapper (accepting stream)\n", ts);
+        }
+        return 1;
+    } else {
+        if (frpc_stcp_verbose_enabled()) {
+            fprintf(stderr, "[%llu] SERVER Warning: on_new_stream_wrapper called for STCP proxy '%s' but role is VISITOR (%d) with stream ID %u. Unexpected.\n",
+                    ts, proxy ? proxy->config.proxy_name : "NULL_PROXY", proxy ? proxy->config.role : -1, (p_stream && *p_stream ? yamux_stream_get_id(*p_stream) : 0));
+        }
+        if (p_stream_user_data_out) *p_stream_user_data_out = NULL;
+        if (frpc_stcp_verbose_enabled()) {
+            fprintf(stdout, "[%llu] SERVER: EXITING on_new_stream_wrapper (rejecting stream - wrong role)\n", ts);
+        }
+        return 0;
+    }
+}
+
+static int on_stream_data_wrapper(void* stream_user_data, const uint8_t* data, size_t len) {
+    frpc_stcp_proxy_t* proxy = (frpc_stcp_proxy_t*)stream_user_data;
+    if (!proxy) {
+        fprintf(stderr, "Error: on_stream_data_wrapper called with NULL stream_user_data\n");
+        return -1; // Indicate error
+    }
     
-    // 调用用户提供的数据回调
+    // Invoke user-provided data callback.
     if (proxy->config.on_data) {
         return proxy->config.on_data(proxy->user_ctx, (uint8_t*)data, len);
     }
@@ -127,57 +195,166 @@ static int on_stream_data_wrapper(void* user_data, const uint8_t* data, size_t l
     return 0;
 }
 
-static void on_stream_close_wrapper(void* user_data, bool by_remote, uint32_t error_code) {
-    frpc_stcp_proxy_t* proxy = (frpc_stcp_proxy_t*)user_data;
-    if (!proxy) return;
-    
-    // 如果关闭的是活跃流，则清除活跃流ID
-    // 注意：这里我们无法确定具体的流ID，因此在其他地方需要处理活跃流ID的清理
-    fprintf(stdout, "Yamux stream closed (by_remote: %d, error_code: %u)\n", by_remote, error_code);
+static void on_stream_established_wrapper(void* stream_user_data) {
+    frpc_stcp_proxy_t* proxy = (frpc_stcp_proxy_t*)stream_user_data;
+    uint64_t current_ts_ms = tools_get_time_ms(); 
+
+    if (frpc_stcp_verbose_enabled()) {
+        fprintf(stdout, "[%llu] ENTERED on_stream_established_wrapper, stream_user_data_ptr: %p\n",
+                (unsigned long long)current_ts_ms, stream_user_data);
+    }
+
+    if (!proxy) { // This will be true if stream_user_data is NULL from yamux.c
+        fprintf(stderr, "[%llu] Error in on_stream_established_wrapper: stream_user_data is NULL. Cannot proceed.\n", (unsigned long long)current_ts_ms); 
+        if (frpc_stcp_verbose_enabled()) {
+            fprintf(stdout, "[%llu] EXITING on_stream_established_wrapper due to NULL proxy.\n", (unsigned long long)current_ts_ms);
+        }
+        return;
+    }
+
+    if (frpc_stcp_verbose_enabled()) {
+        fprintf(stdout, "[%llu] In on_stream_established_wrapper for proxy_name: '%s', active_stream_id: %u\n",
+                (unsigned long long)current_ts_ms, proxy->config.proxy_name, proxy->active_stream_id);
+    }
+
+    if (proxy->active_stream_id == 0) { 
+         if (frpc_stcp_verbose_enabled()) {
+             fprintf(stderr, "[%llu] Warning: on_stream_established_wrapper called but active_stream_id is 0 for proxy '%s'. Ignoring.\n",
+                     (unsigned long long)current_ts_ms, proxy->config.proxy_name);
+             fprintf(stdout, "[%llu] EXITING on_stream_established_wrapper due to active_stream_id being 0.\n", (unsigned long long)current_ts_ms);
+         }
+         return;
+    }
+
+    // This logic is correct IF proxy is valid.
+    if (frpc_stcp_verbose_enabled()) {
+        fprintf(stdout, "[%llu] Yamux stream ID %u established (callback for proxy '%s', active_stream_id: %u)\n",
+                (unsigned long long)current_ts_ms, proxy->active_stream_id, proxy->config.proxy_name, proxy->active_stream_id);
+    }
+
+    if (!proxy->is_connected) {
+        proxy->is_connected = true;
+        if (frpc_stcp_verbose_enabled()) {
+            fprintf(stdout, "[%llu] STCP Proxy '%s' (role %d): Connection established by on_stream_established for stream ID %u. Setting is_connected=true.\n",
+                    (unsigned long long)current_ts_ms, proxy->config.proxy_name, proxy->config.role, proxy->active_stream_id);
+        }
+        if (proxy->config.on_connection) {
+            if (frpc_stcp_verbose_enabled()) {
+                fprintf(stdout, "[%llu] STCP Proxy '%s': Invoking on_connection(1,0) callback from on_stream_established.\n",
+                        (unsigned long long)current_ts_ms, proxy->config.proxy_name);
+            }
+            proxy->config.on_connection(proxy->user_ctx, 1, 0); 
+        }
+    } else {
+        if (frpc_stcp_verbose_enabled()) {
+            fprintf(stdout, "[%llu] STCP Proxy '%s': Stream %u established via on_stream_established, but proxy already marked as connected. No action.\n",
+                    (unsigned long long)current_ts_ms, proxy->config.proxy_name, proxy->active_stream_id);
+        }
+    }
+    if (frpc_stcp_verbose_enabled()) {
+        fprintf(stdout, "[%llu] EXITING on_stream_established_wrapper\n", (unsigned long long)current_ts_ms);
+    }
 }
 
-static int on_write_wrapper(void* user_ctx, const uint8_t* data, size_t len) {
-    frpc_stcp_proxy_t* proxy = (frpc_stcp_proxy_t*)user_ctx;
+static void on_stream_close_wrapper(void* stream_user_data, bool by_remote, uint32_t error_code) {
+    frpc_stcp_proxy_t* proxy = (frpc_stcp_proxy_t*)stream_user_data;
+    uint64_t current_ts_ms = tools_get_time_ms(); 
+
+    if (frpc_stcp_verbose_enabled()) {
+        fprintf(stdout, "[%llu] ENTERED on_stream_close_wrapper, stream_user_data_ptr: %p, by_remote: %d, error_code: %u\n",
+                (unsigned long long)current_ts_ms, stream_user_data, by_remote, error_code);
+    }
+
+    // Keep NULL check for safety, but for debugging, proceed carefully.
+    // if (!proxy) {
+    //     fprintf(stderr, "[%llu] Error: on_stream_close_wrapper called with NULL stream_user_data\n", (unsigned long long)current_ts_ms);
+    //     return;
+    // }
+    
+    uint32_t closed_stream_id = proxy ? proxy->active_stream_id : 0; // Safely access active_stream_id
+
+    if (frpc_stcp_verbose_enabled()) {
+        fprintf(stdout, "[%llu] In on_stream_close_wrapper for proxy_name: '%s', closed_stream_id_val: %u\n",
+                 (unsigned long long)current_ts_ms, proxy ? proxy->config.proxy_name : "NULL_PROXY", closed_stream_id);
+    }
+
+    if (proxy && closed_stream_id == 0 && stream_user_data != NULL) { // only print if proxy is not null but stream id is 0
+        if (frpc_stcp_verbose_enabled()) {
+            fprintf(stdout, "[%llu] Yamux stream close callback for proxy '%s', but active_stream_id is 0. (by_remote: %d, error: %u)\n",
+                (unsigned long long)current_ts_ms, proxy->config.proxy_name, by_remote, error_code);
+        }
+        // return; // Don't return yet, allow exit log
+    }
+
+    if (proxy) { // Check proxy before dereferencing for main logic
+        if (frpc_stcp_verbose_enabled()) {
+            fprintf(stdout, "[%llu] Yamux stream ID %u closed for proxy '%s' (by_remote: %d, error_code: %u, current active_stream_id: %u)\n",
+                    (unsigned long long)current_ts_ms, closed_stream_id, proxy->config.proxy_name, by_remote, error_code, proxy->active_stream_id);
+        }
+
+        if (proxy->is_connected) { 
+            proxy->is_connected = false;
+            if (frpc_stcp_verbose_enabled()) {
+                fprintf(stdout, "[%llu] STCP Proxy '%s': Connection closed for stream ID %u\n",
+                        (unsigned long long)current_ts_ms, proxy->config.proxy_name, closed_stream_id);
+            }
+            if (proxy->config.on_connection) {
+                int frpc_err = by_remote ? FRPC_ERROR_CONNECTION_CLOSED_BY_REMOTE : FRPC_ERROR_CONNECTION_CLOSED;
+                if (error_code != 0 && error_code != YAMUX_GOAWAY_NORMAL) { 
+                     frpc_err = FRPC_ERROR_INTERNAL; 
+                }
+                proxy->config.on_connection(proxy->user_ctx, 0, frpc_err);
+            }
+        }
+        proxy->active_stream_id = 0; 
+    }
+    if (frpc_stcp_verbose_enabled()) {
+        fprintf(stdout, "[%llu] EXITING on_stream_close_wrapper\n", (unsigned long long)current_ts_ms);
+    }
+}
+
+static int on_write_wrapper(void* user_conn_ctx, const uint8_t* data, size_t len) {
+    frpc_stcp_proxy_t* proxy = (frpc_stcp_proxy_t*)user_conn_ctx;
     if (!proxy) return -1;
     
-    // 调用用户提供的写入回调
+    // Invoke user-provided write callback.
     if (proxy->config.on_write) {
         return proxy->config.on_write(proxy->user_ctx, (uint8_t*)data, len);
     }
     
-    return len; // 默认假设全部写入成功
+    return len; // default: assume everything was written successfully
 }
 
-// 初始化yamux会话
+// Initialize Yamux session
 static yamux_session_t* init_yamux_session(frpc_stcp_proxy_t* proxy, bool is_client) {
     if (!proxy) return NULL;
     
-    // 创建yamux配置
+    // Build Yamux config
     yamux_config_t config;
     memset(&config, 0, sizeof(config));
     
-    // 设置默认配置值
+    // Set default config values
     config.enable_keepalive = true;
-    config.keepalive_interval_ms = 30000; // 30秒
+    config.keepalive_interval_ms = 30000; // 30s
     config.max_stream_window_size = 256 * 1024;
     config.initial_stream_window_size = 128 * 1024;
     config.max_streams = 32;
     
-    // 设置回调函数
+    // Set callbacks
     config.on_stream_data = on_stream_data_wrapper;
     config.on_stream_close = on_stream_close_wrapper;
-    config.on_new_stream = NULL; // 我们手动处理新流
-    config.on_stream_established = NULL;
+    config.on_new_stream = on_new_stream_wrapper;
+    config.on_stream_established = on_stream_established_wrapper;
     config.write_fn = on_write_wrapper;
-    config.user_conn_ctx = proxy; // 设置用户上下文为代理对象
+    config.user_conn_ctx = proxy; // use proxy as user_conn_ctx (for write_fn, on_session_close, and on_new_stream's session_ctx)
     
-    // 创建yamux会话
+    // Create Yamux session
     yamux_session_t* session = yamux_session_new(&config, is_client, proxy);
     
     return session;
 }
 
-// 启动STCP Visitor代理
+// Start STCP Visitor proxy
 static int stcp_visitor_start(frpc_stcp_proxy_t* proxy) {
     if (!proxy) return FRPC_ERROR_INVALID_PARAM;
     
@@ -186,18 +363,20 @@ static int stcp_visitor_start(frpc_stcp_proxy_t* proxy) {
         return FRPC_ERROR_INVALID_PARAM;
     }
     
-    // 检查bind_addr和bind_port
+    // Validate bind_addr and bind_port
     if (!proxy->config.bind_addr || proxy->config.bind_port == 0) {
-        fprintf(stderr, "Warning: STCP visitor missing bind_addr or bind_port, using defaults\n");
+        if (frpc_stcp_verbose_enabled()) {
+            fprintf(stderr, "Warning: STCP visitor missing bind_addr or bind_port, using defaults\n");
+        }
         if (!proxy->config.bind_addr) {
-            // 设置默认绑定地址
+            // Set default bind address
             proxy->config.bind_addr = strdup("127.0.0.1");
             if (!proxy->config.bind_addr) {
                 return FRPC_ERROR_MEMORY;
             }
         }
         if (proxy->config.bind_port == 0) {
-            // 设置默认端口
+            // Set default port
             proxy->config.bind_port = 10000;
         }
     }
@@ -208,7 +387,7 @@ static int stcp_visitor_start(frpc_stcp_proxy_t* proxy) {
     return FRPC_SUCCESS;
 }
 
-// 启动STCP Server代理
+// Start STCP Server proxy
 static int stcp_server_start(frpc_stcp_proxy_t* proxy) {
     if (!proxy) return FRPC_ERROR_INVALID_PARAM;
     
@@ -217,7 +396,7 @@ static int stcp_server_start(frpc_stcp_proxy_t* proxy) {
         return FRPC_ERROR_INVALID_PARAM;
     }
     
-    // 目前仅实现基本功能
+    // Currently only basic functionality is implemented.
     fprintf(stdout, "Starting STCP server for local service: %s:%d\n", 
             proxy->config.local_addr, proxy->config.local_port);
     
@@ -225,16 +404,18 @@ static int stcp_server_start(frpc_stcp_proxy_t* proxy) {
     return FRPC_SUCCESS;
 }
 
-// 启动STCP代理
+// Start STCP proxy
 int frpc_stcp_proxy_start(frpc_stcp_proxy_t* proxy) {
     if (!proxy) return FRPC_ERROR_INVALID_PARAM;
     
     if (proxy->is_started) {
-        fprintf(stderr, "Warning: STCP proxy already started\n");
+        if (frpc_stcp_verbose_enabled()) {
+            fprintf(stderr, "Warning: STCP proxy already started\n");
+        }
         return FRPC_SUCCESS;
     }
     
-    // 根据角色启动不同的代理
+    // Start per role
     if (proxy->config.role == FRPC_STCP_ROLE_VISITOR) {
         return stcp_visitor_start(proxy);
     } else {
@@ -242,7 +423,7 @@ int frpc_stcp_proxy_start(frpc_stcp_proxy_t* proxy) {
     }
 }
 
-// 停止STCP代理
+// Stop STCP proxy
 int frpc_stcp_proxy_stop(frpc_stcp_proxy_t* proxy) {
     if (!proxy) return FRPC_ERROR_INVALID_PARAM;
     
@@ -250,40 +431,41 @@ int frpc_stcp_proxy_stop(frpc_stcp_proxy_t* proxy) {
         return FRPC_SUCCESS;
     }
     
-    // 根据角色执行不同的停止操作
+    // Stop per role
     if (proxy->config.role == FRPC_STCP_ROLE_VISITOR) {
-        // 断开与服务器的连接
+        // Disconnect from server
         if (proxy->is_connected) {
             frpc_stcp_visitor_disconnect(proxy);
         }
     } else {
-        // 取消注册服务
+        // Unregister service
         if (proxy->is_registered) {
-            // 向frps发送注销消息
+            // TODO: send unregister message to frps
             // ...
             proxy->is_registered = false;
         }
     }
     
-    // 关闭yamux会话（如果存在）
+    // Close Yamux session (if any)
     if (proxy->yamux_session) {
+        // Close active stream first (if any) to keep session_free state consistent.
+        // NOTE: Do not clear active_stream_id here; the close callback maintains state.
+        if (proxy->active_stream_id) {
+            yamux_stream_close(proxy->yamux_session, proxy->active_stream_id, 0);  // 0 = graceful close (FIN), not RST
+        }
         yamux_session_free(proxy->yamux_session);
         proxy->yamux_session = NULL;
     }
     
     proxy->is_started = false;
     proxy->is_connected = false;
-    
-    // 关闭当前活动的流，如果有的话
-    if (proxy->active_stream_id) {
-        yamux_stream_close(proxy->yamux_session, proxy->active_stream_id, 0);  // 0表示正常关闭，不是RST
-        proxy->active_stream_id = 0;
-    }
+    // Safety: ensure active_stream_id is cleared
+    proxy->active_stream_id = 0;
     
     return FRPC_SUCCESS;
 }
 
-// STCP Visitor建立与服务器的连接
+// STCP Visitor: establish connection to server
 int frpc_stcp_visitor_connect(frpc_stcp_proxy_t* proxy) {
     if (!proxy || proxy->config.role != FRPC_STCP_ROLE_VISITOR) {
         return FRPC_ERROR_INVALID_PARAM;
@@ -295,25 +477,27 @@ int frpc_stcp_visitor_connect(frpc_stcp_proxy_t* proxy) {
     }
     
     if (proxy->is_connected) {
-        fprintf(stderr, "Warning: STCP visitor already connected\n");
+        if (frpc_stcp_verbose_enabled()) {
+            fprintf(stderr, "Warning: STCP visitor already connected\n");
+        }
         return FRPC_SUCCESS;
     }
     
-    // 1. 确保FRP客户端已连接
+    // 1) Ensure FRP client is connected
     int ret = frpc_client_connect(proxy->client);
     if (ret != FRPC_SUCCESS) {
         fprintf(stderr, "Error: Failed to connect FRP client to server\n");
         return ret;
     }
     
-    // 2. 构建NewVisitorConn消息
-    // 在实际实现中，应该序列化为JSON并通过FRP客户端发送
+    // 2) Build NewVisitorConn message
+    // In a full implementation, this should be serialized and sent via the FRP client connection.
     time_t current_time;
     time(&current_time);
     int64_t timestamp = (int64_t)current_time;
     
-    char* sign_key = get_auth_key(proxy->config.sk, timestamp);
-    if (!sign_key) {
+    char sign_key[33] = {0};
+    if (stcp_get_sign_key(proxy->config.sk, timestamp, sign_key) != 0) {
         fprintf(stderr, "Error: Failed to generate sign key\n");
         return FRPC_ERROR_INTERNAL;
     }
@@ -321,9 +505,9 @@ int frpc_stcp_visitor_connect(frpc_stcp_proxy_t* proxy) {
     fprintf(stdout, "Connecting to server '%s' with sign key: %s, timestamp: %lld\n", 
             proxy->config.server_name, sign_key, timestamp);
     
-    // 这里应该构建并发送NewVisitorConn消息
+    // TODO: build and send NewVisitorConn message
     // {
-    //   "run_id": 客户端唯一ID,
+    //   "run_id": client run_id,
     //   "proxy_name": proxy->config.proxy_name,
     //   "sign_key": sign_key,
     //   "timestamp": timestamp,
@@ -332,12 +516,10 @@ int frpc_stcp_visitor_connect(frpc_stcp_proxy_t* proxy) {
     // }
     fprintf(stdout, "Sending NewVisitorConn message for proxy: %s\n", proxy->config.proxy_name);
     
-    // 3. 验证响应（在实际接收数据时由frpc_stcp_receive处理）
-    // 这里模拟接收到成功响应
+    // 3) Verify response (handled by frpc_stcp_receive in a real implementation)
+    // TODO: currently simulated as success
     
-    free(sign_key);
-    
-    // 4. 初始化yamux客户端会话
+    // 4) Initialize Yamux client session
     if (!proxy->yamux_session) {
         proxy->yamux_session = init_yamux_session(proxy, true);
         if (!proxy->yamux_session) {
@@ -346,29 +528,36 @@ int frpc_stcp_visitor_connect(frpc_stcp_proxy_t* proxy) {
         }
     }
     
-    // 5. 打开一个流用于数据通信
-    void* stream_data = NULL; // 可以设置自定义流数据
-    uint32_t stream_id = yamux_session_open_stream(proxy->yamux_session, &stream_data);
+    // 5) Open a stream for data transport
+    void* p_stream_user_data = proxy; // Associate this proxy instance with the stream
+    uint32_t stream_id = yamux_session_open_stream(proxy->yamux_session, &p_stream_user_data);
     if (stream_id == 0) {
-        fprintf(stderr, "Error: Failed to open yamux stream\n");
+        fprintf(stderr, "Error: Failed to open yamux stream for proxy '%s'\n", proxy->config.proxy_name);
         return FRPC_ERROR_INTERNAL;
     }
     
     proxy->active_stream_id = stream_id;
-    fprintf(stdout, "Opened stream ID %u for data communication\n", stream_id);
-    
-    // 标记为已连接
-    proxy->is_connected = true;
-    
-    // 回调通知
-    if (proxy->config.on_connection) {
-        proxy->config.on_connection(proxy->user_ctx, 1, 0);  // 1表示已连接，0表示无错误
+    fprintf(stdout, "STCP Visitor Proxy '%s': Opened stream ID %u for data communication. Waiting for establishment.\n", 
+            proxy->config.proxy_name, stream_id);
+
+    // TEMPORARY: Move is_connected and on_connection call back here for consistent state with Go logs
+    // This is NOT the correct place long-term, as stream is not yet truly established.
+    // This is to make the 'is_connected' flag source clear while debugging stream_user_data.
+    if (!proxy->is_connected) { // Should usually be false here unless called multiple times
+        proxy->is_connected = true; 
+        if (frpc_stcp_verbose_enabled()) {
+            fprintf(stdout, "STCP Visitor Proxy '%s': (TEMPORARY) Marking as connected and calling on_connection after opening stream %u.\n",
+                    proxy->config.proxy_name, stream_id);
+        }
+        if (proxy->config.on_connection) {
+            proxy->config.on_connection(proxy->user_ctx, 1, 0);  // 1 = connected, 0 = no error
+        }
     }
-    
+        
     return FRPC_SUCCESS;
 }
 
-// 关闭与服务器的连接
+// Disconnect from server
 int frpc_stcp_visitor_disconnect(frpc_stcp_proxy_t* proxy) {
     if (!proxy || proxy->config.role != FRPC_STCP_ROLE_VISITOR) {
         return FRPC_ERROR_INVALID_PARAM;
@@ -377,34 +566,36 @@ int frpc_stcp_visitor_disconnect(frpc_stcp_proxy_t* proxy) {
     if (!proxy->is_connected) {
         return FRPC_SUCCESS;
     }
+
+    // NOTE: Do not call on_connection(0, ...) here.
+    // yamux_session_free() triggers on_stream_close for all streams, and on_stream_close_wrapper
+    // is responsible for clearing is_connected and calling on_connection(0, FRPC_ERROR_CONNECTION_CLOSED).
+    // Calling it here as well would result in duplicate disconnect notifications.
     
-    // 关闭活跃的流
+    // Close active stream
     if (proxy->yamux_session && proxy->active_stream_id) {
-        yamux_stream_close(proxy->yamux_session, proxy->active_stream_id, 0);  // 0表示正常关闭，不是RST
-        proxy->active_stream_id = 0;
+        yamux_stream_close(proxy->yamux_session, proxy->active_stream_id, 0);  // 0 = graceful close (FIN), not RST
+        // Do not clear active_stream_id here; the close callback maintains it and avoids noisy logs.
     }
     
-    // 关闭yamux会话
+    // Close Yamux session
     if (proxy->yamux_session) {
         yamux_session_close(proxy->yamux_session);
         yamux_session_free(proxy->yamux_session);
         proxy->yamux_session = NULL;
     }
     
-    // 向frps发送断开连接的消息
+    // TODO: send disconnect message to frps
     // ...
-    
+
+    // Safety: ensure state is cleared (callbacks should already do this).
     proxy->is_connected = false;
-    
-    // 回调通知
-    if (proxy->config.on_connection) {
-        proxy->config.on_connection(proxy->user_ctx, 0, FRPC_ERROR_INTERNAL);  // 0表示断开连接，错误码表示原因
-    }
+    proxy->active_stream_id = 0;
     
     return FRPC_SUCCESS;
 }
 
-// Server注册本地服务
+// STCP Server: register local service
 int frpc_stcp_server_register(frpc_stcp_proxy_t* proxy) {
     if (!proxy || proxy->config.role != FRPC_STCP_ROLE_SERVER) {
         return FRPC_ERROR_INVALID_PARAM;
@@ -416,19 +607,21 @@ int frpc_stcp_server_register(frpc_stcp_proxy_t* proxy) {
     }
     
     if (proxy->is_registered) {
-        fprintf(stderr, "Warning: STCP server already registered\n");
+        if (frpc_stcp_verbose_enabled()) {
+            fprintf(stderr, "Warning: STCP server already registered\n");
+        }
         return FRPC_SUCCESS;
     }
     
-    // 1. 确保FRP客户端已连接
+    // 1. Ensure FRP client is connected
     int ret = frpc_client_connect(proxy->client);
     if (ret != FRPC_SUCCESS) {
         fprintf(stderr, "Error: Failed to connect FRP client to server\n");
         return ret;
     }
     
-    // 2. 向frps服务器注册STCP服务，构建NewProxy消息
-    // 在实际实现中，应该序列化为JSON并通过FRP客户端发送
+    // 2. Register STCP service with frps server, build NewProxy message
+    // In actual implementation, this should be serialized to JSON and sent via FRP client
     // {
     //   "proxy_name": proxy->config.proxy_name,
     //   "proxy_type": "stcp",
@@ -441,10 +634,10 @@ int frpc_stcp_server_register(frpc_stcp_proxy_t* proxy) {
     fprintf(stdout, "Registering STCP server '%s' for local service: %s:%d\n", 
             proxy->config.proxy_name, proxy->config.local_addr, proxy->config.local_port);
     
-    // 3. 等待响应（在实际接收数据时由frpc_stcp_receive处理）
-    // 这里模拟接收到成功响应
+    // 3. Wait for response (handled by frpc_stcp_receive when data is received)
+    // Here we simulate receiving a successful response
     
-    // 4. 初始化yamux服务器会话
+    // 4. Initialize yamux server session
     if (!proxy->yamux_session) {
         proxy->yamux_session = init_yamux_session(proxy, false);
         if (!proxy->yamux_session) {
@@ -455,10 +648,10 @@ int frpc_stcp_server_register(frpc_stcp_proxy_t* proxy) {
     
     fprintf(stdout, "Yamux server session initialized for STCP server\n");
     
-    // 标记为已注册
+    // Mark as registered
     proxy->is_registered = true;
     
-    // 回调通知连接成功
+    // Callback to notify successful connection
     if (proxy->config.on_connection) {
         proxy->config.on_connection(proxy->user_ctx, 1, 0);
     }
@@ -466,13 +659,13 @@ int frpc_stcp_server_register(frpc_stcp_proxy_t* proxy) {
     return FRPC_SUCCESS;
 }
 
-// 设置允许连接的用户列表
+// Set allowed user list
 int frpc_stcp_server_set_allow_users(frpc_stcp_proxy_t* proxy, const char** users, size_t count) {
     if (!proxy || proxy->config.role != FRPC_STCP_ROLE_SERVER) {
         return FRPC_ERROR_INVALID_PARAM;
     }
     
-    // 释放旧的用户列表
+    // Free old user list
     if (proxy->allow_users) {
         for (size_t i = 0; i < proxy->allow_users_count; i++) {
             if (proxy->allow_users[i]) {
@@ -484,7 +677,7 @@ int frpc_stcp_server_set_allow_users(frpc_stcp_proxy_t* proxy, const char** user
         proxy->allow_users_count = 0;
     }
     
-    // 复制新的用户列表
+    // Copy new user list
     if (count > 0 && users) {
         proxy->allow_users = (char**)malloc(count * sizeof(char*));
         if (!proxy->allow_users) {
@@ -496,7 +689,7 @@ int frpc_stcp_server_set_allow_users(frpc_stcp_proxy_t* proxy, const char** user
             if (users[i]) {
                 proxy->allow_users[i] = strdup(users[i]);
                 if (!proxy->allow_users[i]) {
-                    // 释放已分配的内存
+                    // Free allocated memory
                     for (size_t j = 0; j < i; j++) {
                         free(proxy->allow_users[j]);
                     }
@@ -515,7 +708,7 @@ int frpc_stcp_server_set_allow_users(frpc_stcp_proxy_t* proxy, const char** user
     return FRPC_SUCCESS;
 }
 
-// 设置传输配置
+// Set transport configuration
 int frpc_stcp_set_transport_config(frpc_stcp_proxy_t* proxy, const frpc_stcp_transport_config_t* config) {
     if (!proxy || !config) {
         return FRPC_ERROR_INVALID_PARAM;
@@ -527,77 +720,125 @@ int frpc_stcp_set_transport_config(frpc_stcp_proxy_t* proxy, const frpc_stcp_tra
     return FRPC_SUCCESS;
 }
 
-// 发送数据（针对访问端和服务端）
+// Send data (for visitor and server)
 int frpc_stcp_send(frpc_stcp_proxy_t* proxy, const uint8_t* data, size_t len) {
-    if (!proxy || !data) return FRPC_ERROR_INVALID_PARAM;
+    if (frpc_stcp_verbose_enabled()) {
+        fprintf(stderr, "DEBUG: frpc_stcp_send CALLED for proxy '%s'\n", proxy ? proxy->config.proxy_name : "NULL_PROXY");
+        fflush(stderr);
+    }
+
+    uint64_t current_ts_ms = tools_get_time_ms(); // USE tools_get_time_ms
+    int final_ret = FRPC_ERROR_INTERNAL; // Initialize final return value
+
+    if (!proxy || !data) {
+        final_ret = FRPC_ERROR_INVALID_PARAM;
+        if (frpc_stcp_verbose_enabled()) {
+            fprintf(stdout, "[%llu] Exit frpc_stcp_send for proxy '%s' (param error) with result: %d\n",
+                    (unsigned long long)current_ts_ms, proxy ? proxy->config.proxy_name : "NULL_PROXY", final_ret);
+        }
+        return final_ret;
+    }
     
+    if (frpc_stcp_verbose_enabled()) {
+        fprintf(stdout, "[%llu] Enter frpc_stcp_send for proxy '%s', len: %zu, is_started: %d, is_connected: %d, active_stream_id: %u\n",
+                (unsigned long long)current_ts_ms, proxy->config.proxy_name, len, proxy->is_started, proxy->is_connected, proxy->active_stream_id);
+    }
+
     if (!proxy->is_started) {
-        fprintf(stderr, "Error: STCP proxy not started\n");
-        return FRPC_ERROR_INTERNAL;
+        if (frpc_stcp_verbose_enabled()) {
+            fprintf(stderr, "[%llu] Error: STCP proxy '%s' not started\n", (unsigned long long)current_ts_ms, proxy->config.proxy_name);
+        }
+        final_ret = FRPC_ERROR_INTERNAL;
+        if (frpc_stcp_verbose_enabled()) {
+            fprintf(stdout, "[%llu] Exit frpc_stcp_send for proxy '%s' (not started) with result: %d\n",
+                    (unsigned long long)current_ts_ms, proxy->config.proxy_name, final_ret);
+        }
+        return final_ret;
     }
     
-    // 对于visitor，检查是否已连接
-    if (proxy->config.role == FRPC_STCP_ROLE_VISITOR && !proxy->is_connected) {
-        fprintf(stderr, "Error: STCP visitor not connected\n");
-        return FRPC_ERROR_INTERNAL;
-    }
-    
-    // 对于server，检查是否已注册
-    if (proxy->config.role == FRPC_STCP_ROLE_SERVER && !proxy->is_registered) {
-        fprintf(stderr, "Error: STCP server not registered\n");
-        return FRPC_ERROR_INTERNAL;
-    }
-    
-    // 通过yamux会话发送数据
-    if (proxy->yamux_session && proxy->active_stream_id) {
-        fprintf(stdout, "Sending %zu bytes via Yamux stream %u\n", len, proxy->active_stream_id);
+    if (proxy->yamux_session && proxy->active_stream_id != 0) {
+        if (frpc_stcp_verbose_enabled()) {
+            fprintf(stdout, "[%llu] STCP Proxy '%s': Sending %zu bytes via Yamux stream %u\n",
+                    (unsigned long long)current_ts_ms, proxy->config.proxy_name, len, proxy->active_stream_id);
+        }
         
         int ret = yamux_stream_write(proxy->yamux_session, proxy->active_stream_id, data, len);
         if (ret < 0) {
-            fprintf(stderr, "Error: Failed to write to yamux stream, error code: %d\n", ret);
-            return FRPC_ERROR_INTERNAL;
-        }
-        
-        if ((size_t)ret < len) {
-            fprintf(stderr, "Warning: Only sent %d of %zu bytes (may need flow control)\n", ret, len);
+            fprintf(stderr, "[%llu] Error: Failed to write to yamux stream %u for proxy '%s', yamux error code: %d\n", 
+                    (unsigned long long)current_ts_ms, proxy->active_stream_id, proxy->config.proxy_name, ret); 
+            if (ret == -6) { 
+                final_ret = FRPC_ERROR_STREAM_NOT_WRITABLE;
+            } else {
+                final_ret = FRPC_ERROR_INTERNAL; 
+            }
         } else {
-            fprintf(stdout, "Successfully sent %d bytes\n", ret);
+            if ((size_t)ret < len) {
+                fprintf(stderr, "[%llu] Warning: STCP Proxy '%s': Only sent %d of %zu bytes to stream %u (may need flow control)\n", 
+                        (unsigned long long)current_ts_ms, proxy->config.proxy_name, ret, len, proxy->active_stream_id);
+            } else {
+                if (frpc_stcp_verbose_enabled()) {
+                    fprintf(stdout, "[%llu] STCP Proxy '%s': Successfully sent %d bytes to stream %u\n",
+                            (unsigned long long)current_ts_ms, proxy->config.proxy_name, ret, proxy->active_stream_id);
+                }
+            }
+            final_ret = ret; 
         }
-        
-        return ret;
     } else {
-        fprintf(stderr, "Error: No active yamux stream for STCP proxy (session: %p, stream: %u)\n", 
-                (void*)proxy->yamux_session, proxy->active_stream_id);
-        return FRPC_ERROR_INTERNAL;
+        if (frpc_stcp_verbose_enabled()) {
+            fprintf(stderr, "[%llu] Error: No active yamux stream for STCP proxy '%s' (session: %p, stream_id: %u)\n",
+                    (unsigned long long)current_ts_ms, proxy->config.proxy_name, (void*)proxy->yamux_session, proxy->active_stream_id);
+        }
+        final_ret = FRPC_ERROR_INTERNAL;
     }
+    if (frpc_stcp_verbose_enabled()) {
+        fprintf(stdout, "[%llu] Exit frpc_stcp_send for proxy '%s' with result: %d\n",
+                (unsigned long long)current_ts_ms, proxy->config.proxy_name, final_ret);
+    }
+    return final_ret;
 }
 
-// 接收数据处理
+// Handle received data
 int frpc_stcp_receive(frpc_stcp_proxy_t* proxy, const uint8_t* data, size_t len) {
+    uint64_t ts = tools_get_time_ms();
     if (!proxy || !data) return FRPC_ERROR_INVALID_PARAM;
-    
-    if (!proxy->is_started) {
-        fprintf(stderr, "Error: STCP proxy not started\n");
-        return FRPC_ERROR_INTERNAL;
+
+    // Identify if this is server or visitor proxy instance for logging
+    const char* proxy_role_str = (proxy->config.role == FRPC_STCP_ROLE_SERVER) ? "SERVER" : "VISITOR";
+
+    if (frpc_stcp_verbose_enabled()) {
+        fprintf(stdout, "[%llu] %s PROXY '%s': ENTER frpc_stcp_receive, received %zu bytes of data\n",
+                ts, proxy_role_str, proxy->config.proxy_name, len);
     }
     
-    fprintf(stdout, "STCP proxy received %zu bytes of data\n", len);
-    
-    // 处理可能的FRP协议消息
-    // 简化版本：假设已经建立了连接，所有数据都是给yamux的
-    
-    // 如果有yamux会话，则将数据交给yamux处理
+    if (!proxy->is_started) {
+        fprintf(stderr, "[%llu] %s PROXY '%s': Error: STCP proxy not started in frpc_stcp_receive\n", ts, proxy_role_str, proxy->config.proxy_name);
+        return FRPC_ERROR_INTERNAL;
+    }
+        
     if (proxy->yamux_session) {
+        if (frpc_stcp_verbose_enabled()) {
+            fprintf(stdout, "[%llu] %s PROXY '%s': Passing %zu bytes to yamux_session_receive\n",
+                    ts, proxy_role_str, proxy->config.proxy_name, len);
+        }
         int ret = yamux_session_receive(proxy->yamux_session, data, len);
         if (ret < 0) {
-            fprintf(stderr, "Error: Yamux session receive failed with code: %d\n", ret);
+            if (frpc_stcp_verbose_enabled()) {
+                fprintf(stderr, "[%llu] %s PROXY '%s': Error: Yamux session receive failed with code: %d\n",
+                        ts, proxy_role_str, proxy->config.proxy_name, ret);
+            }
             return FRPC_ERROR_INTERNAL;
         }
-        fprintf(stdout, "Yamux processed %d bytes of data\n", ret);
+        if (frpc_stcp_verbose_enabled()) {
+            fprintf(stdout, "[%llu] %s PROXY '%s': Yamux processed %d bytes of data. Exiting frpc_stcp_receive.\n",
+                    ts, proxy_role_str, proxy->config.proxy_name, ret);
+        }
         return ret;
     }
     
-    // 如果没有yamux会话，则直接调用回调函数
+    if (frpc_stcp_verbose_enabled()) {
+        fprintf(stdout, "[%llu] %s PROXY '%s': No yamux session, calling on_data callback directly. Exiting frpc_stcp_receive.\n",
+                ts, proxy_role_str, proxy->config.proxy_name);
+    }
     if (proxy->config.on_data) {
         return proxy->config.on_data(proxy->user_ctx, (uint8_t*)data, len);
     }
@@ -605,7 +846,7 @@ int frpc_stcp_receive(frpc_stcp_proxy_t* proxy, const uint8_t* data, size_t len)
     return FRPC_SUCCESS;
 }
 
-// 处理定期任务
+// Handle periodic tasks
 int frpc_stcp_tick(frpc_stcp_proxy_t* proxy) {
     if (!proxy) return FRPC_ERROR_INVALID_PARAM;
     
@@ -613,39 +854,47 @@ int frpc_stcp_tick(frpc_stcp_proxy_t* proxy) {
         return FRPC_SUCCESS;
     }
     
-    // 处理FRP客户端的定期任务
+    // Handle FRP client periodic tasks
     if (proxy->client) {
         int ret = frpc_client_tick(proxy->client);
         if (ret != FRPC_SUCCESS) {
-            fprintf(stderr, "Warning: FRP client tick failed with code: %d\n", ret);
+            if (frpc_stcp_verbose_enabled()) {
+                fprintf(stderr, "Warning: FRP client tick failed with code: %d\n", ret);
+            }
         }
     }
     
-    // 处理yamux会话的定期任务
+    // Handle yamux session periodic tasks
     if (proxy->yamux_session) {
         yamux_session_tick(proxy->yamux_session);
         
-        // 检查会话是否关闭，如果关闭则重置连接状态
+        // Check if session is closed
         if (yamux_session_is_closed(proxy->yamux_session)) {
-            fprintf(stdout, "Yamux session closed, resetting connection state\n");
-            
-            // 重置状态
-            if (proxy->config.role == FRPC_STCP_ROLE_VISITOR) {
-                proxy->is_connected = false;
-            } else {
-                // 对于服务端，仅在某些情况下重置注册状态
-                // 通常不应该因为一个会话关闭而取消整个服务的注册
+            if (frpc_stcp_verbose_enabled()) {
+                fprintf(stdout, "Yamux session closed for proxy '%s', active_stream_id: %u, is_connected: %d\n",
+                        proxy->config.proxy_name, proxy->active_stream_id, proxy->is_connected);
             }
             
-            // 通知连接断开
-            if (proxy->config.on_connection) {
-                proxy->config.on_connection(proxy->user_ctx, 0, FRPC_ERROR_INTERNAL);  // 0表示断开连接，错误码表示原因
+            // If the STCP connection was considered active (is_connected = true) AND
+            // an active_stream_id was set, but on_stream_close_wrapper somehow wasn't triggered for it
+            // (or didn't clear is_connected), then we ensure notification happens.
+            // However, on_stream_close_wrapper *should* be called by yamux_session_free/close.
+            // This is more of a safeguard.
+            if (proxy->is_connected && proxy->active_stream_id != 0) {
+                 if (frpc_stcp_verbose_enabled()) {
+                     fprintf(stdout, "Warning: Yamux session for proxy '%s' closed while STCP connection (stream %u) was still marked active. Forcing disconnect notification.\n",
+                             proxy->config.proxy_name, proxy->active_stream_id);
+                 }
+                 if (proxy->config.on_connection) {
+                     proxy->config.on_connection(proxy->user_ctx, 0, FRPC_ERROR_CONNECTION_CLOSED);
+                 }
             }
+            proxy->is_connected = false; // Ensure disconnected state
             
-            // 释放会话
-            yamux_session_free(proxy->yamux_session);
+            // Free session
+            yamux_session_free(proxy->yamux_session); // This should trigger on_stream_close for any remaining streams
             proxy->yamux_session = NULL;
-            proxy->active_stream_id = 0;
+            proxy->active_stream_id = 0; // Ensure active_stream_id is cleared
         }
     }
     
