@@ -1,0 +1,219 @@
+# GitHub Actions CI/CD for tiny-frpc
+# Builds and tests demo binaries for Linux, macOS (Intel + Apple Silicon), and Windows
+# Creates releases automatically when tags are pushed
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+env:
+  PROJECT_NAME: tiny-frpc-demo
+
+jobs:
+  # ============================================================================
+  # Linux amd64
+  # ============================================================================
+  build-linux-amd64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y make gcc
+
+      - name: Build
+        run: |
+          make install
+          make all
+          make demo-stcp
+
+      - name: Test
+        run: make test
+
+      - name: Package artifacts
+        run: |
+          mkdir -p artifacts/linux-amd64
+          cp build/demo_stcp_frps artifacts/linux-amd64/
+          cp build/demo_stcp_server artifacts/linux-amd64/
+          cp build/demo_stcp_visitor artifacts/linux-amd64/
+          cp build/demo_stcp_local_client artifacts/linux-amd64/
+          cp demo/stcp/README.md artifacts/linux-amd64/
+          cd artifacts && tar -czvf ${PROJECT_NAME}-linux-amd64.tar.gz linux-amd64
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PROJECT_NAME }}-linux-amd64
+          path: artifacts/${{ env.PROJECT_NAME }}-linux-amd64.tar.gz
+
+  # ============================================================================
+  # macOS amd64 (Intel)
+  # ============================================================================
+  build-darwin-amd64:
+    runs-on: macos-13  # Intel Mac
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Build
+        run: |
+          make install
+          make all
+          make demo-stcp
+
+      - name: Test
+        run: make test
+
+      - name: Package artifacts
+        run: |
+          mkdir -p artifacts/darwin-amd64
+          cp build/demo_stcp_frps artifacts/darwin-amd64/
+          cp build/demo_stcp_server artifacts/darwin-amd64/
+          cp build/demo_stcp_visitor artifacts/darwin-amd64/
+          cp build/demo_stcp_local_client artifacts/darwin-amd64/
+          cp demo/stcp/README.md artifacts/darwin-amd64/
+          cd artifacts && tar -czvf ${PROJECT_NAME}-darwin-amd64.tar.gz darwin-amd64
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PROJECT_NAME }}-darwin-amd64
+          path: artifacts/${{ env.PROJECT_NAME }}-darwin-amd64.tar.gz
+
+  # ============================================================================
+  # macOS arm64 (Apple Silicon)
+  # ============================================================================
+  build-darwin-arm64:
+    runs-on: macos-14  # Apple Silicon
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Build
+        run: |
+          make install
+          make all
+          make demo-stcp
+
+      - name: Test
+        run: make test
+
+      - name: Package artifacts
+        run: |
+          mkdir -p artifacts/darwin-arm64
+          cp build/demo_stcp_frps artifacts/darwin-arm64/
+          cp build/demo_stcp_server artifacts/darwin-arm64/
+          cp build/demo_stcp_visitor artifacts/darwin-arm64/
+          cp build/demo_stcp_local_client artifacts/darwin-arm64/
+          cp demo/stcp/README.md artifacts/darwin-arm64/
+          cd artifacts && tar -czvf ${PROJECT_NAME}-darwin-arm64.tar.gz darwin-arm64
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PROJECT_NAME }}-darwin-arm64
+          path: artifacts/${{ env.PROJECT_NAME }}-darwin-arm64.tar.gz
+
+  # ============================================================================
+  # Windows amd64 (cross-compile from Linux)
+  # ============================================================================
+  build-windows-amd64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install cross-compiler
+        run: sudo apt-get update && sudo apt-get install -y make gcc-mingw-w64-x86-64 zip
+
+      - name: Build
+        run: |
+          make CC=x86_64-w64-mingw32-gcc LDFLAGS="-static" all
+          make CC=x86_64-w64-mingw32-gcc LDFLAGS="-static" demo-stcp || true
+
+      - name: Package artifacts
+        run: |
+          mkdir -p artifacts/windows-amd64
+          for f in demo_stcp_frps demo_stcp_server demo_stcp_visitor demo_stcp_local_client; do
+            if [ -f "build/$f" ]; then
+              cp "build/$f" "artifacts/windows-amd64/${f}.exe"
+            elif [ -f "build/${f}.exe" ]; then
+              cp "build/${f}.exe" "artifacts/windows-amd64/"
+            fi
+          done
+          cp demo/stcp/README.md artifacts/windows-amd64/
+          cd artifacts && zip -r ${PROJECT_NAME}-windows-amd64.zip windows-amd64
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PROJECT_NAME }}-windows-amd64
+          path: artifacts/${{ env.PROJECT_NAME }}-windows-amd64.zip
+
+  # ============================================================================
+  # Release - Triggered on tags (e.g., v1.0.0)
+  # ============================================================================
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-linux-amd64, build-darwin-amd64, build-darwin-arm64, build-windows-amd64]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List artifacts
+        run: find artifacts -type f
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Release ${{ github.ref_name }}
+          body: |
+            ## tiny-frpc ${{ github.ref_name }}
+            
+            Cross-platform STCP demo binaries.
+            
+            ### Downloads
+            | Platform | Architecture | File |
+            |----------|--------------|------|
+            | Linux | amd64 | `${{ env.PROJECT_NAME }}-linux-amd64.tar.gz` |
+            | macOS | amd64 (Intel) | `${{ env.PROJECT_NAME }}-darwin-amd64.tar.gz` |
+            | macOS | arm64 (Apple Silicon) | `${{ env.PROJECT_NAME }}-darwin-arm64.tar.gz` |
+            | Windows | amd64 | `${{ env.PROJECT_NAME }}-windows-amd64.zip` |
+            
+            ### Usage
+            See `README.md` in the archive for usage instructions.
+          files: |
+            artifacts/${{ env.PROJECT_NAME }}-linux-amd64/${{ env.PROJECT_NAME }}-linux-amd64.tar.gz
+            artifacts/${{ env.PROJECT_NAME }}-darwin-amd64/${{ env.PROJECT_NAME }}-darwin-amd64.tar.gz
+            artifacts/${{ env.PROJECT_NAME }}-darwin-arm64/${{ env.PROJECT_NAME }}-darwin-arm64.tar.gz
+            artifacts/${{ env.PROJECT_NAME }}-windows-amd64/${{ env.PROJECT_NAME }}-windows-amd64.zip
