@@ -18,7 +18,7 @@ extern void onStcpConnection(void* user_ctx, int connected, int error_code);
 static frpc_stcp_proxy_t* g_visitor_proxy = NULL;
 static frpc_stcp_proxy_t* g_server_proxy = NULL;
 
-// 发送测试数据的函数
+// sending test data的函数
 static int send_test_data_via_visitor(const char* data) {
     if (g_visitor_proxy == NULL) {
         return -1;
@@ -26,7 +26,7 @@ static int send_test_data_via_visitor(const char* data) {
     return frpc_stcp_send(g_visitor_proxy, (const unsigned char*)data, strlen(data));
 }
 
-// 发送回复数据（服务端回复到本地连接）
+// 发送回复数据（Server回复到本地连接）
 static int send_reply_data_via_server(const char* data) {
     if (g_server_proxy == NULL) {
         return -1;
@@ -34,7 +34,7 @@ static int send_reply_data_via_server(const char* data) {
     return frpc_stcp_send(g_server_proxy, (const unsigned char*)data, strlen(data));
 }
 
-// 启动STCP Visitor的辅助函数
+// Helper function to start STCP Visitor
 static int start_stcp_visitor(frpc_client_t* client, const char* proxy_name, const char* sk,
                       const char* server_name, const char* bind_addr, int bind_port, void* user_ctx) {
     frpc_stcp_config_t config;
@@ -69,7 +69,7 @@ static int start_stcp_visitor(frpc_client_t* client, const char* proxy_name, con
     transport_config.use_compression = 0;
     frpc_stcp_set_transport_config(proxy, &transport_config);
 
-    // 连接到服务器
+    // connection to服务器
     ret = frpc_stcp_visitor_connect(proxy);
     if (ret != 0) {
         frpc_stcp_proxy_stop(proxy);
@@ -83,7 +83,7 @@ static int start_stcp_visitor(frpc_client_t* client, const char* proxy_name, con
     return 0;
 }
 
-// 启动STCP Server的辅助函数
+// Helper function to start STCP Server
 static int start_stcp_server(frpc_client_t* client, const char* proxy_name, const char* sk,
                      const char* local_addr, int local_port, void* user_ctx) {
     frpc_stcp_config_t config;
@@ -198,7 +198,7 @@ const (
 	ModeBoth    = "both"
 )
 
-// frpc.h 中的错误码（避免依赖 cgo 导出的 enum 常量，提升编辑器/静态分析兼容性）
+// Error codes from frpc.h (avoid dependency on cgo-exported enum constants for editor/static analysis compatibility)
 const (
 	frpcErrConnectionClosed         = -8
 	frpcErrConnectionClosedByRemote = -9
@@ -271,7 +271,7 @@ func init() {
 
 // startFRPSServer starts an embedded FRPS server for E2E tests.
 func startFRPSServer(ctx context.Context) error {
-	log.Println("尝试以编程方式启动FRPS服务器...")
+	log.Println("Attempting to start FRPS server programmatically...")
 
 	// Initialize frp logger to avoid noisy default logging.
 	frplog.InitLogger("console", frpsLogLevel, 0, false)
@@ -283,11 +283,11 @@ func startFRPSServer(ctx context.Context) error {
 
 	svr, err := server.NewService(cfg)
 	if err != nil {
-		log.Printf("创建FRPS服务失败: %v", err)
-		return fmt.Errorf("创建FRPS服务失败: %v", err)
+		log.Printf("Failed to create FRPS service: %v", err)
+		return fmt.Errorf("Failed to create FRPS service: %v", err)
 	}
 
-	log.Printf("FRPS服务已创建，监听地址: %s:%d, Token: %s", cfg.BindAddr, cfg.BindPort, cfg.Auth.Token)
+	log.Printf("FRPS service created, listening on: %s:%d, Token: %s", cfg.BindAddr, cfg.BindPort, cfg.Auth.Token)
 
 	go func() {
 		svr.Run(ctx)
@@ -296,7 +296,7 @@ func startFRPSServer(ctx context.Context) error {
 
 	// Give FRPS a moment to start.
 	time.Sleep(2 * time.Second)
-	log.Println("FRPS服务器应该已启动。")
+	log.Println("FRPS server should be started。")
 	return nil
 }
 
@@ -317,7 +317,7 @@ func onStcpData(user_ctx unsafe.Pointer, data *C.uchar, length C.size_t) C.int {
 		log.Printf("Go onStcpData: Server proxy received data, will send reply: %s\n", testReplyFromServer)
 		cReply := C.CString(testReplyFromServer)
 		defer C.free(unsafe.Pointer(cReply))
-		// 这里应该通过 C.frpc_stcp_send(g_server_proxy, ...) 发送，而不是直接写
+		// Should send via C.frpc_stcp_send(g_server_proxy, ...), not directly write
 		// 但这只是一个回调，实际发送逻辑在 handleConnection 等地方触发
 		// C.send_reply_data_via_server(cReply) // This would call frpc_stcp_send on g_server_proxy
 	}
@@ -331,7 +331,7 @@ func onStcpData(user_ctx unsafe.Pointer, data *C.uchar, length C.size_t) C.int {
 		}
 	}
 
-	return C.int(length) // 表示处理了所有数据
+	return C.int(length) // Indicates all data was processed
 }
 
 // onStcpWrite is a CGO callback for high-level write notifications (not Yamux transport).
@@ -369,27 +369,27 @@ func onStcpConnection(user_ctx unsafe.Pointer, connected C.int, error_code C.int
 	ctxInt := uintptr(user_ctx)
 
 	if connected != 0 {
-		log.Printf("上下文 %d: 已连接\n", ctxInt)
+		log.Printf("Context %d: connected\n", ctxInt)
 		if ctxInt == 1 { // Server
-			log.Println("服务端已连接到FRPS")
+			log.Println("Serverconnected到FRPS")
 			// Avoid closing channels across reconnect cycles; send a signal non-blocking.
 			select {
 			case serverReady <- struct{}{}:
 			default:
 			}
 		} else if ctxInt == 2 { // Visitor
-			log.Println("访问端已连接到FRPS")
+			log.Println("Visitorconnected到FRPS")
 		}
 	} else {
 		// Disconnect: -8/-9 are treated as normal close/by-remote close in our semantics.
 		if int(error_code) == frpcErrConnectionClosed || int(error_code) == frpcErrConnectionClosedByRemote {
 			if verbose {
-				log.Printf("上下文 %d: 已断开连接(正常), 错误码: %d\n", ctxInt, error_code)
+				log.Printf("Context %d: disconnected (normal), error code: %d\n", ctxInt, error_code)
 			} else {
-				log.Printf("上下文 %d: 已断开连接(正常)\n", ctxInt)
+				log.Printf("Context %d: disconnected (normal)\n", ctxInt)
 			}
 		} else {
-			log.Printf("上下文 %d: 已断开连接, 错误码: %d\n", ctxInt, error_code)
+			log.Printf("Context %d: disconnected, error code: %d\n", ctxInt, error_code)
 		}
 	}
 }
@@ -401,7 +401,7 @@ func startLocalTestServer(addr string, port int) (net.Listener, error) {
 		return nil, err
 	}
 
-	log.Printf("本地测试服务器已在 %s:%d 启动\n", addr, port)
+	log.Printf("Local test server started on %s:%d started\n", addr, port)
 
 	go func() {
 		for {
@@ -410,7 +410,7 @@ func startLocalTestServer(addr string, port int) (net.Listener, error) {
 				if strings.Contains(err.Error(), "use of closed network connection") {
 					return
 				}
-				log.Println("接受连接错误:", err)
+				log.Println("Accept connection error:", err)
 				continue
 			}
 
@@ -434,27 +434,27 @@ func handleConnection(conn net.Conn) {
 		// 设置读取超时
 		conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 
-		// 读取客户端发送的数据
+		// 读取Client发送的数据
 		n, err := conn.Read(buffer)
 		if err != nil {
 			if err != io.EOF {
-				log.Println("从连接读取错误:", err)
+				log.Println("Read from connection error:", err)
 			}
 			return
 		}
 
 		message := string(buffer[:n])
-		log.Printf("测试服务器收到: %s\n", message)
+		log.Printf("Test server received: %s\n", message)
 
-		// 发送响应 - 回显客户端发送的数据
+		// 发送响应 - 回显Client发送的数据
 		response := fmt.Sprintf("Echo: %s", message)
 		_, err = conn.Write([]byte(response))
 		if err != nil {
-			log.Println("向连接写入错误:", err)
+			log.Println("Write to connection error:", err)
 			return
 		}
 
-		log.Printf("测试服务器已回复: %s\n", response)
+		log.Printf("Test server replied: %s\n", response)
 	}
 }
 
@@ -479,38 +479,38 @@ func freeFRPClientConfig(config *C.frpc_config_t) {
 // runBidirectionalTest runs the bidirectional TCP<->STCP bridging check.
 // It returns error instead of log.Fatal to keep reconnect cycles clean.
 func runBidirectionalTest(ctx context.Context) error {
-	log.Println("开始执行双向通信测试...")
+	log.Println("Startingbidirectional communication test...")
 
 	// Wait until server side is ready.
 	select {
 	case <-serverReady:
-		log.Println("服务端已准备就绪，可以开始测试")
+		log.Println("Serveris ready for testing")
 	case <-time.After(5 * time.Second):
-		return fmt.Errorf("等待服务端准备超时")
+		return fmt.Errorf("等待Server准备超时")
 	}
 
 	// Give a little time for the tunnel to become ready.
 	time.Sleep(500 * time.Millisecond)
 
 	// Create a TCP client to the Visitor bind port.
-	log.Printf("创建测试客户端连接到 %s:%d", bindAddr, bindPort)
+	log.Printf("Creating testClientconnection to %s:%d", bindAddr, bindPort)
 	tcpAddr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%s:%d", bindAddr, bindPort))
 	if err != nil {
-		return fmt.Errorf("解析TCP地址错误: %w", err)
+		return fmt.Errorf("Parse TCP address error: %w", err)
 	}
 
 	conn, err := net.DialTCP("tcp", nil, tcpAddr)
 	if err != nil {
-		return fmt.Errorf("创建TCP连接错误: %w", err)
+		return fmt.Errorf("Create TCP connection error: %w", err)
 	}
 	defer conn.Close()
 
-	log.Println("已成功连接到访问端，发送测试数据...")
+	log.Println("已成功connection toVisitor，sending test data...")
 
 	// Send test payload.
 	_, err = conn.Write([]byte(testDataFromClient))
 	if err != nil {
-		return fmt.Errorf("发送测试数据错误: %w", err)
+		return fmt.Errorf("sending test data错误: %w", err)
 	}
 
 	// Read reply.
@@ -518,39 +518,39 @@ func runBidirectionalTest(ctx context.Context) error {
 	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	n, err := conn.Read(buffer)
 	if err != nil {
-		return fmt.Errorf("从服务器读取回复错误: %w", err)
+		return fmt.Errorf("Read reply from server error: %w", err)
 	}
 
 	response := string(buffer[:n])
-	log.Printf("客户端收到服务器回复: %s", response)
+	log.Printf("Clientreceived server reply: %s", response)
 
 	// Validate reply contains original message.
 	if !strings.Contains(response, testDataFromClient) {
-		return fmt.Errorf("服务器回复不包含原始消息")
+		return fmt.Errorf("Server reply does not contain original message")
 	}
 
 	// Second round.
 	secondTestMessage := "Second test message from client!"
 	_, err = conn.Write([]byte(secondTestMessage))
 	if err != nil {
-		return fmt.Errorf("发送第二条测试数据错误: %w", err)
+		return fmt.Errorf("Send second test data error: %w", err)
 	}
 
 	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	n, err = conn.Read(buffer)
 	if err != nil {
-		return fmt.Errorf("从服务器读取第二次回复错误: %w", err)
+		return fmt.Errorf("Read second reply from server error: %w", err)
 	}
 
 	secondResponse := string(buffer[:n])
-	log.Printf("客户端收到服务器第二次回复: %s", secondResponse)
+	log.Printf("Clientreceived second server reply: %s", secondResponse)
 
 	// Validate second reply contains original message.
 	if !strings.Contains(secondResponse, secondTestMessage) {
-		return fmt.Errorf("服务器第二次回复不包含原始消息")
+		return fmt.Errorf("Server second reply does not contain original message")
 	}
 
-	log.Println("双向通信测试成功完成！")
+	log.Println("Bidirectional communication test completed successfully!")
 	select {
 	case testCompleteChan <- struct{}{}:
 	default:
@@ -565,7 +565,7 @@ func startVisitorLocalListener(addr string, port int) (net.Listener, error) {
 		return nil, err
 	}
 
-	log.Printf("Visitor本地监听已在 %s:%d 启动\n", addr, port)
+	log.Printf("Visitor local listener started on %s:%d started\n", addr, port)
 
 	go func() {
 		for {
@@ -574,13 +574,13 @@ func startVisitorLocalListener(addr string, port int) (net.Listener, error) {
 				if strings.Contains(err.Error(), "use of closed network connection") {
 					return
 				}
-				log.Println("接受连接错误:", err)
+				log.Println("Accept connection error:", err)
 				continue
 			}
 
-			log.Printf("Visitor接收到新连接: %s", conn.RemoteAddr().String())
+			log.Printf("Visitorreceived new connection: %s", conn.RemoteAddr().String())
 
-			// 启动goroutine处理连接
+			// Starting goroutine to handle connection
 			go handleVisitorConnection(conn)
 		}
 	}()
@@ -592,40 +592,40 @@ func startVisitorLocalListener(addr string, port int) (net.Listener, error) {
 func handleVisitorConnection(conn net.Conn) {
 	defer conn.Close()
 
-	log.Printf("Visitor处理新连接: %s", conn.RemoteAddr().String())
+	log.Printf("Visitorhandling new connection: %s", conn.RemoteAddr().String())
 
-	// 创建缓冲区接收数据
+	// Creating buffer to receive data
 	buffer := make([]byte, 1024)
 
 	for {
 		// 设置读取超时
 		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 
-		// 读取客户端数据
+		// 读取Client数据
 		n, err := conn.Read(buffer)
 		if err != nil {
 			if err != io.EOF {
-				log.Printf("从客户端读取错误: %v", err)
+				log.Printf("从Client读取错误: %v", err)
 			}
 			return
 		}
 
 		clientMsg := string(buffer[:n])
-		log.Printf("Visitor从客户端收到: %s", clientMsg)
+		log.Printf("Visitor从Client收到: %s", clientMsg)
 
-		// 通过C函数发送到服务端
+		// Send to Server via C function
 		C.send_test_data_via_visitor(C.CString(clientMsg))
 
-		// 这里简化处理，实际应该等待服务端回复后再转发回客户端
+		// Simplified handling, should wait for Server reply before forwarding to Client
 		// 但我们可以用已有回调系统来实现
-		time.Sleep(500 * time.Millisecond) // 给服务端一点时间处理
+		time.Sleep(500 * time.Millisecond) // 给Server一点时间处理
 
-		// 如果有回复，我们会在onStcpData回调中收到
+		// If there is a reply, we will receive it in onStcpData callback
 		// 由于这里无法知道确切回复内容，采用简单回显
-		response := fmt.Sprintf("已将消息转发至服务端: %s", clientMsg)
+		response := fmt.Sprintf("Message forwarded toServer: %s", clientMsg)
 		_, err = conn.Write([]byte(response))
 		if err != nil {
-			log.Printf("向客户端回写错误: %v", err)
+			log.Printf("向Client回写错误: %v", err)
 			return
 		}
 	}
@@ -641,7 +641,7 @@ func main() {
 	// 设置工作目录为项目根目录
 	exePath, err := os.Executable()
 	if err != nil {
-		log.Fatalf("获取可执行文件路径失败: %v", err)
+		log.Fatalf("Failed to get executable path: %v", err)
 	}
 
 	// 可执行文件通常位于 ${PROJECT_ROOT}/build/ 下（make frpc-test / make coverage）。
@@ -649,39 +649,39 @@ func main() {
 	// Dir(Dir(exePath)) => ${PROJECT_ROOT}
 	projectRoot := filepath.Dir(filepath.Dir(exePath))
 	if err := os.Chdir(projectRoot); err != nil {
-		log.Fatalf("切换到项目根目录失败: %v", err)
+		log.Fatalf("Failed to change to project root directory: %v", err)
 	}
 
-	// 创建上下文，用于控制服务生命周期
+	// 创建Context，用于控制服务生命周期
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	// 设置清理函数，确保资源被释放
 	defer C.cleanup_stcp_proxies()
 
-	// 处理信号，优雅退出
+	// Handling signal for graceful exit
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigCh
-		log.Println("收到信号，正在关闭...")
+		log.Println("Received signal, shutting down...")
 		cancel()
 	}()
 
-	// 启动内置FRPS服务器（如果需要）
+	// Starting embedded FRPS server (if needed)
 	if runFRPS {
 		if err := startFRPSServer(ctx); err != nil {
-			log.Fatalf("启动FRPS服务器失败: %v", err)
+			log.Fatalf("Failed to start FRPS server: %v", err)
 		}
 	}
 
-	// 启动本地测试服务器（Server模式或Both模式）
+	// Starting local test server (Server or Both mode)
 	var localListener net.Listener
 	if mode == ModeServer || mode == ModeBoth {
 		var err error
 		localListener, err = startLocalTestServer(localAddr, localPort)
 		if err != nil {
-			log.Fatalf("启动本地测试服务器失败: %v", err)
+			log.Fatalf("Failed to start local test server: %v", err)
 		}
 		defer localListener.Close()
 	}
@@ -691,7 +691,7 @@ func main() {
 		var err error
 		visitorTCPListener, err = startVisitorLocalListener(bindAddr, bindPort)
 		if err != nil {
-			log.Fatalf("启动Visitor本地监听失败: %v", err)
+			log.Fatalf("Failed to start Visitor local listener: %v", err)
 		}
 		defer visitorTCPListener.Close()
 	}
@@ -705,7 +705,7 @@ func main() {
 			badCfg := createFRPClientConfig(frpsAddr, frpsPort, "bad_token")
 			badClient := C.frpc_client_new(badCfg, nil)
 			if badClient == nil {
-				log.Fatal("创建FRP客户端失败(bad_token)")
+				log.Fatal("创建FRPClient失败(bad_token)")
 			}
 			cProxyName := C.CString(proxyName)
 			cSk := C.CString(secretKey)
@@ -714,18 +714,18 @@ func main() {
 			C.free(unsafe.Pointer(cProxyName))
 			C.free(unsafe.Pointer(cSk))
 			C.free(unsafe.Pointer(cLocalAddr))
-			// 清理（无论成功/失败都要清）
+			// Cleanup (regardless of success or failure)
 			C.cleanup_stcp_proxies()
 			C.frpc_client_free(badClient)
 			freeFRPClientConfig(badCfg)
 			if ret == 0 {
-				log.Fatal("bad_token 预期失败但却成功（认证失败/重试边界测试未通过）")
+				log.Fatal("bad_token expected to fail but succeeded (auth failure boundary test not passed)")
 			}
-			log.Printf("bad_token 失败用例符合预期（ret=%d），继续正常重连循环", int(ret))
+			log.Printf("bad_token 失败用例符合预期（ret=%d），继续正常reconnect cycle", int(ret))
 		}
 
 		for i := 1; i <= frpcReconnectCycles; i++ {
-			log.Printf("=== FRPC 重连循环 %d/%d ===", i, frpcReconnectCycles)
+			log.Printf("=== FRPC reconnect cycle %d/%d ===", i, frpcReconnectCycles)
 			resetCycleSignals()
 
 			// Each cycle creates a new client + proxies to cover repeated create/destroy
@@ -734,10 +734,10 @@ func main() {
 			client := C.frpc_client_new(clientConfig, nil)
 			if client == nil {
 				freeFRPClientConfig(clientConfig)
-				log.Fatal("创建FRP客户端失败")
+				log.Fatal("创建FRPClient失败")
 			}
 
-			// 启动 STCP Server
+			// Starting STCP Server
 			{
 				cProxyName := C.CString(proxyName)
 				cSk := C.CString(secretKey)
@@ -750,11 +750,11 @@ func main() {
 					C.cleanup_stcp_proxies()
 					C.frpc_client_free(client)
 					freeFRPClientConfig(clientConfig)
-					log.Fatalf("启动STCP服务端失败，错误码: %d", ret)
+					log.Fatalf("Starting STCPServer失败，error code: %d", ret)
 				}
 			}
 
-			// 启动 STCP Visitor
+			// Starting STCP Visitor
 			{
 				cProxyName := C.CString(proxyName)
 				cSk := C.CString(secretKey)
@@ -769,7 +769,7 @@ func main() {
 					C.cleanup_stcp_proxies()
 					C.frpc_client_free(client)
 					freeFRPClientConfig(clientConfig)
-					log.Fatalf("启动STCP访问端失败，错误码: %d", ret)
+					log.Fatalf("Starting STCPVisitor失败，error code: %d", ret)
 				}
 			}
 
@@ -777,7 +777,7 @@ func main() {
 				C.cleanup_stcp_proxies()
 				C.frpc_client_free(client)
 				freeFRPClientConfig(clientConfig)
-				log.Fatalf("双向通信测试失败: %v", err)
+				log.Fatalf("bidirectional communication test失败: %v", err)
 			}
 
 			// Cleanup for this cycle: stop/free proxies + disconnect/free client.
@@ -788,17 +788,17 @@ func main() {
 			time.Sleep(200 * time.Millisecond)
 		}
 
-		log.Println("✅ FRPC 重连循环全部通过")
+		log.Println("✅ FRPC reconnect cycle全部通过")
 		return
 	}
 
-	// 其他模式：保持单次启动行为（用于人工/手动调试）
+	// Other modes: maintain single-start behavior (for manual debugging)
 	resetCycleSignals()
 	clientConfig := createFRPClientConfig(frpsAddr, frpsPort, "test_token")
 	defer freeFRPClientConfig(clientConfig)
 	client := C.frpc_client_new(clientConfig, nil)
 	if client == nil {
-		log.Fatal("创建FRP客户端失败")
+		log.Fatal("创建FRPClient失败")
 	}
 	defer C.frpc_client_free(client)
 
@@ -811,9 +811,9 @@ func main() {
 		C.free(unsafe.Pointer(cSk))
 		C.free(unsafe.Pointer(cLocalAddr))
 		if ret != 0 {
-			log.Fatalf("启动STCP服务端失败，错误码: %d", ret)
+			log.Fatalf("Starting STCPServer失败，error code: %d", ret)
 		}
-		log.Println("STCP服务端启动成功")
+		log.Println("STCPServerstarted successfully")
 	}
 
 	if mode == ModeVisitor || mode == ModeBoth {
@@ -827,12 +827,12 @@ func main() {
 		C.free(unsafe.Pointer(cServerName))
 		C.free(unsafe.Pointer(cBindAddr))
 		if ret != 0 {
-			log.Fatalf("启动STCP访问端失败，错误码: %d", ret)
+			log.Fatalf("Starting STCPVisitor失败，error code: %d", ret)
 		}
-		log.Println("STCP访问端启动成功")
+		log.Println("STCPVisitorstarted successfully")
 	}
 
-	// 等待上下文取消（通过信号）
+	// 等待Context取消（通过信号）
 	<-ctx.Done()
 	log.Println("关闭中，正在清理资源...")
 }

@@ -83,24 +83,24 @@ static int on_stream_data_received(void* stream_user_data, const uint8_t* data, 
         g_data_received = len;
         ILOG("C: 接收到的数据: %.*s\n", (int)len, g_received_data);
 
-        // 使用全局会话和记录的流ID进行窗口更新 和 发送响应
+        // 使用全局会话和记录的流ID进行窗口更新 和 send response
         if (c_session != NULL && g_current_stream_id > 0) {
             ILOG("C: 自动更新流 %u 的窗口，增加 %zu 字节\n", g_current_stream_id, len);
             yamux_stream_window_update(c_session, g_current_stream_id, (uint32_t)len);
 
-            // 发送响应数据
+            // send response数据
             const char* response = "Pong from C Server!";
             size_t response_len = strlen(response);
-            ILOG("C: 服务端尝试为流 %u 发送响应: %s\n", g_current_stream_id, response);
+            ILOG("C: Server attempting to send response for stream %u send response: %s\n", g_current_stream_id, response);
             int written = yamux_stream_write(c_session, g_current_stream_id, (const uint8_t*)response, response_len);
             if (written < 0) {
-                IERR("C: 服务端为流 %u 发送响应失败, 错误码: %d\n", g_current_stream_id, written);
+                IERR("C: Server for stream %u failed to send response, error code: %d\n", g_current_stream_id, written);
             } else {
-                ILOG("C: 服务端为流 %u 成功发送 %d 字节的响应\n", g_current_stream_id, written);
+                ILOG("C: Server for stream %u successfully sent %d bytes response\n", g_current_stream_id, written);
             }
 
         } else {
-            ILOG("C: 无法更新窗口或发送响应：session=%p, stream_id=%u\n", 
+            ILOG("C: 无法更新窗口或send response：session=%p, stream_id=%u\n", 
                     c_session, g_current_stream_id);
         }
     }
@@ -116,24 +116,24 @@ static void on_stream_established(void* stream_user_data) {
 
 // 流关闭回调
 static void on_stream_closed(void* stream_user_data, bool by_remote, uint32_t error_code) {
-    ILOG("C: 流已关闭，远端关闭: %d, 错误码: %u\n", by_remote ? 1 : 0, error_code);
+    ILOG("C: Stream closed, by_remote: %d, error code: %u\n", by_remote ? 1 : 0, error_code);
 }
 
 // 新流回调
 static int on_new_stream(void* session_user_data, yamux_stream_t** p_stream, void** p_stream_user_data_out) {
     (void)session_user_data;
     if (p_stream == NULL || *p_stream == NULL) {
-        IERR("C: 错误 - on_new_stream 收到空 stream 指针\n");
+        IERR("C: Error - on_new_stream received null stream pointer\n");
         return 0; // reject
     }
 
     uint32_t stream_id = yamux_stream_get_id(*p_stream);
-    ILOG("C: 收到新流请求，ID: %u\n", stream_id);
+    ILOG("C: Received new stream request, ID: %u\n", stream_id);
 
     // 记录流ID到全局变量
     g_current_stream_id = stream_id;
 
-    // 当前测试主要通过全局 stream_id 驱动，不依赖 stream_user_data
+    // Current test mainly driven by global stream_id, not dependent on stream_user_data
     if (p_stream_user_data_out) {
         *p_stream_user_data_out = NULL;
     }
@@ -319,7 +319,7 @@ const interopReconnectCycles = 5
 func runCycles(name string, cycles int, fn func() bool) bool {
 	ok := true
 	for i := 0; i < cycles; i++ {
-		fmt.Printf("\n--- %s 重连循环 %d/%d ---\n", name, i+1, cycles)
+		fmt.Printf("\n--- %s reconnect cycle %d/%d ---\n", name, i+1, cycles)
 		if !fn() {
 			ok = false
 		}
@@ -357,9 +357,9 @@ func connToFd(conn net.Conn) (int, error) {
     return fd, nil
 }
 
-// 测试Go客户端连接C服务端
+// Test Go client connecting to C server
 func testGoClientToCServer() bool {
-    fmt.Println("\n=== 测试Go客户端连接C服务端 ===")
+    fmt.Println("\n=== Test Go client connecting to C server ===")
 
     listener, err := createTCPServer("127.0.0.1:0")
     if err != nil {
@@ -371,52 +371,52 @@ func testGoClientToCServer() bool {
     var cServerProcessDone = make(chan bool, 1) // Used to signal C server goroutine completion
     var serverFullyReady = make(chan bool, 1) // Signaled by C server after session creation
 
-    // 启动C端yamux服务器
+    // Start C-side yamux server
     go func() {
         defer func() {
             if r := recover(); r != nil {
-                fmt.Printf("C服务端 goroutine panic: %v\n", r)
+                fmt.Printf("C server goroutine panic: %v\n", r)
             }
             listener.Close() // Ensure listener is closed
             cServerProcessDone <- true // Signal that this goroutine is exiting
         }()
 
-        fmt.Println("C: 服务端 goroutine 启动, 等待连接...")
+        fmt.Println("C: Server goroutine started, waiting for connection...")
         conn, err := listener.Accept()
         if err != nil {
-            fmt.Printf("C: 服务端接受连接失败: %v\n", err)
+            fmt.Printf("C: Server failed to accept connection: %v\n", err)
             // Don't send on serverFullyReady if accept fails
             return
         }
-        fmt.Printf("C: 服务端接受连接成功: %s -> %s\n", conn.RemoteAddr(), conn.LocalAddr())
+        fmt.Printf("C: Server accepted connection successfully: %s -> %s\n", conn.RemoteAddr(), conn.LocalAddr())
 
         fd, err := connToFd(conn)
         if err != nil {
-            fmt.Printf("C: 服务端 connToFd 失败: %v\n", err)
+            fmt.Printf("C: Server connToFd failed: %v\n", err)
             return
         }
 
         // 设置套接字为非阻塞模式
         if C.set_nonblocking(C.int(fd)) != 0 {
-            fmt.Println("C: 服务端设置非阻塞模式失败")
+            fmt.Println("C: Server failed to set non-blocking mode")
             conn.Close()
             return
         }
-        fmt.Println("C: 服务端套接字已设置为非阻塞模式")
+        fmt.Println("C: Server socket set to non-blocking mode")
 
 
         session := C.create_interop_session(C.int(fd), C.bool(false))
         if session == nil {
-            fmt.Println("C: 服务端创建yamux会话失败")
+            fmt.Println("C: Server failed to create yamux session")
             conn.Close()
             return
         }
         defer C.yamux_session_free(session)
-        fmt.Println("C: 服务端 yamux 会话创建成功")
+        fmt.Println("C: Server yamux session created successfully")
 
-        // 通知主goroutine服务器已完全准备好
+        // Notifying main goroutine that server is fully ready
         serverFullyReady <- true
-        fmt.Println("C: 服务端已发送 serverFullyReady 信号")
+        fmt.Println("C: Server sent serverFullyReady signal")
 
         // 处理网络数据循环
         timeout := time.After(5 * time.Second) // Increased overall timeout for server processing
@@ -425,27 +425,27 @@ func testGoClientToCServer() bool {
             loopCount++
             // fmt.Printf("C: 服务端 PND 循环 #%d\n", loopCount) // Can be noisy
             if C.yamux_session_is_closed(session) {
-                fmt.Println("C: 服务端检测到会话关闭 (yamux_session_is_closed), 退出处理循环")
+                fmt.Println("C: Server detected session closed (yamux_session_is_closed), exiting processing loop")
                 return
             }
 
             select {
             case <-timeout:
-                fmt.Println("C: 服务端处理网络数据超时 (select timeout)")
+                fmt.Println("C: Server processing network data timeout (select timeout)")
                 return
             default:
                 // Non-blocking check if we should stop (e.g. from a quit channel if implemented)
             }
 
             result := C.process_network_data(session, C.int(fd))
-            // fmt.Printf("C: 服务端 process_network_data 返回: %d\n", result) // Can be noisy
+            // fmt.Printf("C: Server process_network_data returned: %d\n", result) // Can be noisy
 
             if result < 0 {
                 // process_network_data returns -1 on EOF/connection closed, or negative yamux error codes on protocol errors.
                 if result == -1 {
-                    fmt.Println("C: 服务端检测到连接关闭(EOF)，退出处理循环")
+                    fmt.Println("C: 服务端检测到连接关闭(EOF)，exiting processing loop")
                 } else {
-                    fmt.Printf("C: 服务端 process_network_data 返回错误 %d，退出处理循环\n", result)
+                    fmt.Printf("C: Server process_network_data returned错误 %d，exiting processing loop\n", result)
                 }
                 return;
             }
@@ -455,28 +455,28 @@ func testGoClientToCServer() bool {
         }
     }()
 
-    // 给C服务端一点时间启动并开始监听
+    // Give C server time to start and listen
     time.Sleep(100 * time.Millisecond)
 
-    // 创建Go yamux客户端 (连接操作现在在这里)
-    fmt.Println("Go: 客户端尝试连接到", serverAddr)
+    // Create Go yamux client (connection now happens here))
+    fmt.Println("Go: Client attempting to connect to", serverAddr)
     clientConn, err := net.DialTimeout("tcp", serverAddr, 1*time.Second) // Timeout for dial
     if err != nil {
-        fmt.Printf("Go: 客户端连接失败: %v\n", err)
+        fmt.Printf("Go: Client connection failed: %v\n", err)
         // Wait for C server goroutine to finish to get any error messages from it
         <-cServerProcessDone
         return false
     }
-    fmt.Println("Go: 客户端连接成功")
+    fmt.Println("Go: Client connected successfully")
     defer clientConn.Close()
 
-    // 等待服务端完全准备好 (接受连接并创建了yamux会话)
-    fmt.Println("Go: 客户端等待 serverFullyReady 信号...")
+    // Wait for server to be fully ready (accepted connection and created yamux session))
+    fmt.Println("Go: Client waiting for serverFullyReady signal...")
     select {
     case <-serverFullyReady:
-        fmt.Println("Go: 客户端收到 serverFullyReady 信号")
+        fmt.Println("Go: Client received serverFullyReady signal")
     case <-time.After(2 * time.Second): // Increased timeout
-        fmt.Println("Go: 客户端等待 serverFullyReady 超时")
+        fmt.Println("Go: Client waiting for serverFullyReady timeout")
         <-cServerProcessDone // ensure C server goroutine logs are flushed if it's stuck
         return false
     }
@@ -484,71 +484,71 @@ func testGoClientToCServer() bool {
     config := yamux.DefaultConfig()
     goSession, err := yamux.Client(clientConn, config)
     if err != nil {
-        fmt.Printf("Go: 客户端创建yamux会话失败: %v\n", err)
+        fmt.Printf("Go: Client failed to create yamux session: %v\n", err)
         <-cServerProcessDone
         return false
     }
-    fmt.Println("Go: 客户端 yamux 会话创建成功")
+    fmt.Println("Go: Client yamux session created successfully")
     defer goSession.Close()
 
     // 打开流并发送数据
     stream, err := goSession.OpenStream()
     if err != nil {
-        fmt.Printf("Go: 客户端打开流失败: %v\n", err)
+        fmt.Printf("Go: Client failed to open stream: %v\n", err)
         <-cServerProcessDone
         return false
     }
-    fmt.Println("Go: 客户端打开流成功")
+    fmt.Println("Go: Client opened stream successfully")
     defer stream.Close()
 
     message := "Hello from Go yamux client!"
-    fmt.Printf("Go: 客户端发送数据: '%s'\n", message)
+    fmt.Printf("Go: Client sending data: '%s'\n", message)
     _, err = stream.Write([]byte(message))
     if err != nil {
-        fmt.Printf("Go: 客户端发送数据失败: %v\n", err)
+        fmt.Printf("Go: Client sending data失败: %v\n", err)
         <-cServerProcessDone
         return false
     }
-    fmt.Println("Go: 客户端发送数据成功")
+    fmt.Println("Go: Client sending data成功")
     
     // 增加接收响应的逻辑
     buf := make([]byte, 128)
     n, err := stream.Read(buf)
     if err != nil {
         if err == io.EOF {
-            fmt.Println("Go: 客户端读取到EOF")
+            fmt.Println("Go: Client read EOF")
         } else {
-            fmt.Printf("Go: 客户端读取响应失败: %v\n", err)
+            fmt.Printf("Go: Client failed to read response: %v\n", err)
             // No return false here, let the C server finish its timeout
         }
     } else {
-        fmt.Printf("Go: 客户端收到响应: '%s'\n", string(buf[:n]))
+        fmt.Printf("Go: Client received response: '%s'\n", string(buf[:n]))
     }
 
-    // 主动关闭客户端侧资源，让 C 服务端能尽快读到 EOF 并退出处理循环（避免“select timeout”误导性日志）
+    // 主动关闭客户端侧资源，让 C 服务端能尽快读到 EOF 并exiting processing loop（避免“select timeout”误导性日志）
     _ = stream.Close()
     _ = goSession.Close()
     _ = clientConn.Close()
 
-    // 等待C服务端处理完成 (通过cServerProcessDone channel)
-    fmt.Println("Go: 客户端等待C服务端处理完成...")
+    // Wait for C server to finish processing (via cServerProcessDone channel))
+    fmt.Println("Go: Client waiting for C server to finish processing...")
     select {
     case <-cServerProcessDone:
-        fmt.Println("Go: C服务端处理完成信号收到")
+        fmt.Println("Go: C server processing complete signal received")
     case <-time.After(5 * time.Second): // Timeout for the C server to finish its loop
-        fmt.Println("Go: 等待C服务端处理超时")
+        fmt.Println("Go: Timeout waiting for C server processing")
         return false // Consider this a failure
     }
     
     // At this point, the C server goroutine has finished.
     // We can assume success if we reached here without returning false.
-    fmt.Println("✓ Go客户端连接C服务端 测试似乎成功")
+    fmt.Println("✓ Go client to C server test seems successful")
     return true
 }
 
-// 测试C客户端连接Go服务端
+// Test C client connecting to Go server
 func testCClientToGoServer() bool {
-    fmt.Println("\n=== 测试C客户端连接Go服务端 ===")
+    fmt.Println("\n=== Test C client connecting to Go server ===")
     
     // 创建TCP服务器(Go端使用)
     listener, err := createTCPServer("127.0.0.1:0")
@@ -561,11 +561,11 @@ func testCClientToGoServer() bool {
     var success = make(chan bool, 1)
     var serverDone = make(chan bool, 1)
     
-    // 启动Go端yamux服务器
+    // Start Go-side yamux server
     go func() {
         defer func() {
             if r := recover(); r != nil {
-                fmt.Printf("Go服务端异常: %v\n", r)
+                fmt.Printf("Go server panic: %v\n", r)
                 success <- false
                 return
             }
@@ -573,7 +573,7 @@ func testCClientToGoServer() bool {
         
         conn, err := listener.Accept()
         if err != nil {
-            fmt.Printf("Go服务端接受连接失败: %v\n", err)
+            fmt.Printf("GoServer failed to accept connection: %v\n", err)
             success <- false
             return
         }
@@ -581,7 +581,7 @@ func testCClientToGoServer() bool {
         config := yamux.DefaultConfig()
         session, err := yamux.Server(conn, config)
         if err != nil {
-            fmt.Printf("Go服务端创建yamux会话失败: %v\n", err)
+            fmt.Printf("GoServer failed to create yamux session: %v\n", err)
             success <- false
             return
         }
@@ -589,7 +589,7 @@ func testCClientToGoServer() bool {
         // 接受并处理流
         stream, err := session.AcceptStream()
         if err != nil {
-            fmt.Printf("Go服务端接受流失败: %v\n", err)
+            fmt.Printf("Go server failed to accept stream: %v\n", err)
             success <- false
             return
         }
@@ -598,40 +598,40 @@ func testCClientToGoServer() bool {
         buffer := make([]byte, 1024)
         n, err := stream.Read(buffer)
         if err != nil && err != io.EOF {
-            fmt.Printf("Go服务端读取数据失败: %v\n", err)
+            fmt.Printf("Go server failed to read data: %v\n", err)
             success <- false
             return
         }
         
         if n > 0 {
             message := string(buffer[:n])
-            fmt.Printf("Go: 服务端收到数据: %s\n", message)
+            fmt.Printf("Go: Server received data: %s\n", message)
             
-            // 发送响应
+            // send response
             response := "Hello from Go yamux server!"
             _, err = stream.Write([]byte(response))
             if err != nil {
-                fmt.Printf("Go服务端响应失败: %v\n", err)
+                fmt.Printf("Go server failed to respond: %v\n", err)
                 success <- false
                 return
             }
         }
         
-        // 等待一段时间以确保C客户端处理完响应
+        // Wait to ensure C client processes the response
         time.Sleep(500 * time.Millisecond)
         
-        // 通知主goroutine服务端已完成
+        // Notify main goroutine that server is done
         serverDone <- true
         success <- true
     }()
     
-    // 等待服务端启动
+    // Wait for server to start
     time.Sleep(100 * time.Millisecond)
     
-    // 创建C yamux客户端
+    // Create C yamux client
     conn, err := net.Dial("tcp", serverAddr)
     if err != nil {
-        fmt.Printf("C客户端连接失败: %v\n", err)
+        fmt.Printf("CClient connection failed: %v\n", err)
         return false
     }
     
@@ -642,14 +642,14 @@ func testCClientToGoServer() bool {
     }
     // 设置套接字为非阻塞模式
     if C.set_nonblocking(C.int(fd)) != 0 {
-        fmt.Println("C客户端设置非阻塞模式失败")
+        fmt.Println("C client failed to set non-blocking mode")
         return false
     }
-    fmt.Println("C: 客户端套接字已设置为非阻塞模式")
+    fmt.Println("C: Client socket set to non-blocking mode")
 
     session := C.create_interop_session(C.int(fd), C.bool(true))
     if session == nil {
-        fmt.Println("C客户端创建yamux会话失败")
+        fmt.Println("CClient failed to create yamux session")
         return false
     }
     defer C.yamux_session_free(session)
@@ -660,7 +660,7 @@ func testCClientToGoServer() bool {
     
     streamID := C.test_open_and_send(session, message)
     if streamID == 0 {
-        fmt.Println("C客户端打开流失败")
+        fmt.Println("CClient failed to open stream")
         return false
     }
     
@@ -670,7 +670,7 @@ func testCClientToGoServer() bool {
         for i := 0; i < 30; i++ {
             result := C.process_network_data(session, C.int(fd))
             if result < 0 {
-                fmt.Printf("C客户端处理网络数据出错: %d\n", result)
+                fmt.Printf("C client error processing network data: %d\n", result)
                 break
             }
             time.Sleep(50 * time.Millisecond)
@@ -681,20 +681,20 @@ func testCClientToGoServer() bool {
     // 等待数据处理完成
     select {
     case <-procDone:
-        fmt.Println("C客户端处理网络数据完成")
+        fmt.Println("C client finished processing network data")
     case <-time.After(2 * time.Second):
-        fmt.Println("C客户端处理网络数据超时")
+        fmt.Println("C client processing network data timeout")
     }
     
     // 关闭流
     C.yamux_stream_close(session, streamID, 0)
     
-    // 等待服务端处理完成
+    // Wait for server to finish processing
     select {
     case <-serverDone:
-        fmt.Println("Go服务端处理完成")
+        fmt.Println("Go server processing complete")
     case <-time.After(1 * time.Second):
-        fmt.Println("等待Go服务端完成超时")
+        fmt.Println("Timeout waiting for Go server to finish")
     }
     
     // 获取最终结果
@@ -702,7 +702,7 @@ func testCClientToGoServer() bool {
     case result := <-success:
         return result
     default:
-        fmt.Println("没有收到Go服务端结果")
+        fmt.Println("Did not receive Go server result")
         return false
     }
 }
@@ -711,21 +711,21 @@ func main() {
     // Ensure LLVM coverage profile is flushed (only active with -tags=covflush).
     defer flushCoverage()
 
-    fmt.Println("开始运行yamux互操作性测试套件...")
+    fmt.Println("Starting yamux interoperability test suite...")
     
     success := true
     
-    // 运行所有测试（包含重连/重复生命周期）
-    if !runCycles("Go客户端 -> C服务端", interopReconnectCycles, testGoClientToCServer) {
+    // Run all tests (including reconnect/repeat lifecycle)
+    if !runCycles("Go client -> C server", interopReconnectCycles, testGoClientToCServer) {
         success = false
     }
-    if !runCycles("C客户端 -> Go服务端", interopReconnectCycles, testCClientToGoServer) {
+    if !runCycles("C client -> Go server", interopReconnectCycles, testCClientToGoServer) {
         success = false
     }
     
     if success {
-        fmt.Println("\n✅ 所有互操作性测试通过！")
+        fmt.Println("\n✅ All interoperability tests passed!")
     } else {
-        fmt.Println("\n❌ 部分测试失败！")
+        fmt.Println("\n❌ Some tests failed!")
     }
 } 
