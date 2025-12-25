@@ -64,7 +64,8 @@ endif
 
 # Compiler flags
 # Note: -Wno-error=format allows format warnings (uint64_t vs %llu differs by platform)
-CFLAGS := -Wall -Werror -Wno-error=format -g -I$(INCLUDE_DIR) -I$(WRAPPER_DIR) $(CFLAGS_COV)
+# Note: -Wno-error=unknown-pragmas allows #pragma comment (MSVC-only) on mingw
+CFLAGS := -Wall -Werror -Wno-error=format -Wno-error=unknown-pragmas -g -I$(INCLUDE_DIR) -I$(WRAPPER_DIR) $(CFLAGS_COV)
 LDFLAGS := $(LDFLAGS_COV)
 
 # Node-gyp helper (some environments don't expose `node-gyp` in PATH, but npm bundles it).
