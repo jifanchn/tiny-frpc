@@ -1,5 +1,5 @@
 # GitLab CI/CD Configuration for tiny-frpc
-# Builds demo binaries for Linux, macOS, and Windows
+# Builds demo binaries for Linux, macOS (Intel + Apple Silicon), and Windows
 # Creates releases automatically when tags are pushed
 
 stages:
@@ -8,14 +8,14 @@ stages:
   - release
 
 variables:
-  # Artifact names
   PROJECT_NAME: tiny-frpc-demo
 
 # ============================================================================
 # Build Stage - Cross-platform compilation
 # ============================================================================
 
-build:linux:
+# --- Linux amd64 ---
+build:linux-amd64:
   stage: build
   image: gcc:latest
   script:
@@ -35,10 +35,12 @@ build:linux:
       - artifacts/${PROJECT_NAME}-linux-amd64.tar.gz
     expire_in: 1 week
 
-build:macos:
+# --- macOS amd64 (Intel) ---
+build:darwin-amd64:
   stage: build
   tags:
-    - macos  # Requires a macOS runner with this tag
+    - macos
+    - amd64
   script:
     - make all
     - make demo-stcp
@@ -55,19 +57,50 @@ build:macos:
       - artifacts/${PROJECT_NAME}-darwin-amd64.tar.gz
     expire_in: 1 week
 
-build:windows:
+# --- macOS arm64 (Apple Silicon) ---
+build:darwin-arm64:
   stage: build
   tags:
-    - windows  # Requires a Windows runner with this tag
+    - macos
+    - arm64
   script:
-    # Using MinGW-w64 for cross-compilation on Windows
-    - make CC=x86_64-w64-mingw32-gcc all
-    - make CC=x86_64-w64-mingw32-gcc demo-stcp
+    - make all
+    - make demo-stcp
+    - mkdir -p artifacts/darwin-arm64
+    - cp build/demo_stcp_frps artifacts/darwin-arm64/
+    - cp build/demo_stcp_server artifacts/darwin-arm64/
+    - cp build/demo_stcp_visitor artifacts/darwin-arm64/
+    - cp build/demo_stcp_local_client artifacts/darwin-arm64/
+    - cp demo/stcp/README.md artifacts/darwin-arm64/
+    - cd artifacts && tar -czvf ${PROJECT_NAME}-darwin-arm64.tar.gz darwin-arm64
+  artifacts:
+    name: "${PROJECT_NAME}-darwin-arm64"
+    paths:
+      - artifacts/${PROJECT_NAME}-darwin-arm64.tar.gz
+    expire_in: 1 week
+
+# --- Windows amd64 (cross-compile from Linux) ---
+build:windows-amd64:
+  stage: build
+  image: debian:bullseye
+  script:
+    - apt-get update && apt-get install -y make gcc-mingw-w64-x86-64 zip
+    - |
+      cat > mingw.mk << 'EOF'
+      CC = x86_64-w64-mingw32-gcc
+      LDFLAGS += -static -lpthread
+      EOF
+    - make CC=x86_64-w64-mingw32-gcc LDFLAGS="-static" all
+    - make CC=x86_64-w64-mingw32-gcc LDFLAGS="-static" demo-stcp || true
     - mkdir -p artifacts/windows-amd64
-    - cp build/demo_stcp_frps.exe artifacts/windows-amd64/ 2>/dev/null || cp build/demo_stcp_frps artifacts/windows-amd64/demo_stcp_frps.exe
-    - cp build/demo_stcp_server.exe artifacts/windows-amd64/ 2>/dev/null || cp build/demo_stcp_server artifacts/windows-amd64/demo_stcp_server.exe
-    - cp build/demo_stcp_visitor.exe artifacts/windows-amd64/ 2>/dev/null || cp build/demo_stcp_visitor artifacts/windows-amd64/demo_stcp_visitor.exe
-    - cp build/demo_stcp_local_client.exe artifacts/windows-amd64/ 2>/dev/null || cp build/demo_stcp_local_client artifacts/windows-amd64/demo_stcp_local_client.exe
+    - |
+      for f in demo_stcp_frps demo_stcp_server demo_stcp_visitor demo_stcp_local_client; do
+        if [ -f "build/$f" ]; then
+          cp "build/$f" "artifacts/windows-amd64/${f}.exe"
+        elif [ -f "build/${f}.exe" ]; then
+          cp "build/${f}.exe" "artifacts/windows-amd64/"
+        fi
+      done
     - cp demo/stcp/README.md artifacts/windows-amd64/
     - cd artifacts && zip -r ${PROJECT_NAME}-windows-amd64.zip windows-amd64
   artifacts:
@@ -76,26 +109,6 @@ build:windows:
       - artifacts/${PROJECT_NAME}-windows-amd64.zip
     expire_in: 1 week
 
-# Alternative: Cross-compile Windows from Linux (if no Windows runner available)
-build:windows-cross:
-  stage: build
-  image: debian:bullseye
-  script:
-    - apt-get update && apt-get install -y make gcc-mingw-w64-x86-64 zip
-    - make CC=x86_64-w64-mingw32-gcc LDFLAGS="-static" all
-    - make CC=x86_64-w64-mingw32-gcc LDFLAGS="-static" demo-stcp || echo "Demo build may need adjustments for cross-compile"
-    - mkdir -p artifacts/windows-amd64
-    - cp build/*.exe artifacts/windows-amd64/ 2>/dev/null || true
-    - find build -name "demo_stcp_*" -exec cp {} artifacts/windows-amd64/ \; 2>/dev/null || true
-    - cp demo/stcp/README.md artifacts/windows-amd64/
-    - cd artifacts && zip -r ${PROJECT_NAME}-windows-amd64.zip windows-amd64
-  artifacts:
-    name: "${PROJECT_NAME}-windows-amd64-cross"
-    paths:
-      - artifacts/${PROJECT_NAME}-windows-amd64.zip
-    expire_in: 1 week
-  when: manual  # Run manually if native Windows build is preferred
-
 # ============================================================================
 # Test Stage
 # ============================================================================
@@ -103,12 +116,11 @@ build:windows-cross:
 test:linux:
   stage: test
   image: golang:1.21
-  needs: ["build:linux"]
+  needs: ["build:linux-amd64"]
   script:
     - apt-get update && apt-get install -y gcc make
     - make install
     - make test
-    - make test-bindings || echo "Bindings tests may need additional setup"
   allow_failure: true
 
 # ============================================================================
@@ -119,16 +131,18 @@ release:
   stage: release
   image: registry.gitlab.com/gitlab-org/release-cli:latest
   needs:
-    - job: build:linux
+    - job: build:linux-amd64
       artifacts: true
-    - job: build:macos
+    - job: build:darwin-amd64
       artifacts: true
-      optional: true  # macOS runner may not be available
-    - job: build:windows
+      optional: true
+    - job: build:darwin-arm64
       artifacts: true
-      optional: true  # Windows runner may not be available
+      optional: true
+    - job: build:windows-amd64
+      artifacts: true
   rules:
-    - if: $CI_COMMIT_TAG  # Only run on tags
+    - if: $CI_COMMIT_TAG
   script:
     - echo "Creating release for tag $CI_COMMIT_TAG"
     - ls -la artifacts/
@@ -141,20 +155,26 @@ release:
       Cross-platform STCP demo binaries.
       
       ### Downloads
-      - **Linux (amd64)**: `${PROJECT_NAME}-linux-amd64.tar.gz`
-      - **macOS (amd64)**: `${PROJECT_NAME}-darwin-amd64.tar.gz`
-      - **Windows (amd64)**: `${PROJECT_NAME}-windows-amd64.zip`
+      | Platform | Architecture | File |
+      |----------|--------------|------|
+      | Linux | amd64 | `${PROJECT_NAME}-linux-amd64.tar.gz` |
+      | macOS | amd64 (Intel) | `${PROJECT_NAME}-darwin-amd64.tar.gz` |
+      | macOS | arm64 (Apple Silicon) | `${PROJECT_NAME}-darwin-arm64.tar.gz` |
+      | Windows | amd64 | `${PROJECT_NAME}-windows-amd64.zip` |
       
       ### Usage
       See `README.md` in the archive for usage instructions.
     assets:
       links:
-        - name: "${PROJECT_NAME}-linux-amd64.tar.gz"
-          url: "${CI_PROJECT_URL}/-/jobs/artifacts/${CI_COMMIT_TAG}/raw/artifacts/${PROJECT_NAME}-linux-amd64.tar.gz?job=build:linux"
+        - name: "Linux amd64"
+          url: "${CI_PROJECT_URL}/-/jobs/artifacts/${CI_COMMIT_TAG}/raw/artifacts/${PROJECT_NAME}-linux-amd64.tar.gz?job=build:linux-amd64"
           link_type: package
-        - name: "${PROJECT_NAME}-darwin-amd64.tar.gz"
-          url: "${CI_PROJECT_URL}/-/jobs/artifacts/${CI_COMMIT_TAG}/raw/artifacts/${PROJECT_NAME}-darwin-amd64.tar.gz?job=build:macos"
+        - name: "macOS amd64 (Intel)"
+          url: "${CI_PROJECT_URL}/-/jobs/artifacts/${CI_COMMIT_TAG}/raw/artifacts/${PROJECT_NAME}-darwin-amd64.tar.gz?job=build:darwin-amd64"
           link_type: package
-        - name: "${PROJECT_NAME}-windows-amd64.zip"
-          url: "${CI_PROJECT_URL}/-/jobs/artifacts/${CI_COMMIT_TAG}/raw/artifacts/${PROJECT_NAME}-windows-amd64.zip?job=build:windows"
+        - name: "macOS arm64 (Apple Silicon)"
+          url: "${CI_PROJECT_URL}/-/jobs/artifacts/${CI_COMMIT_TAG}/raw/artifacts/${PROJECT_NAME}-darwin-arm64.tar.gz?job=build:darwin-arm64"
+          link_type: package
+        - name: "Windows amd64"
+          url: "${CI_PROJECT_URL}/-/jobs/artifacts/${CI_COMMIT_TAG}/raw/artifacts/${PROJECT_NAME}-windows-amd64.zip?job=build:windows-amd64"
           link_type: package
