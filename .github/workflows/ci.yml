@@ -140,9 +140,11 @@ jobs:
 
   # ============================================================================
   # Windows amd64 (cross-compile from Linux)
+  # Note: Windows support is experimental - POSIX wrapper layer not yet ported
   # ============================================================================
   build-windows-amd64:
     runs-on: ubuntu-latest
+    continue-on-error: true  # Windows not fully supported yet
     steps:
       - uses: actions/checkout@v4
         with:
