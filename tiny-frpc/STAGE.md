@@ -17,8 +17,9 @@ This file tracks development stages and major milestones for the repository.
 
 ## Stage 2: FRP STCP implementation (Visitor + Server)
 
-- **Status:** In progress
+- **Status:** Complete
 - **Date started:** 2024-05-13
+- **Date completed:** 2025-12-25
 
 ### Current scope
 
@@ -44,9 +45,11 @@ This file tracks development stages and major milestones for the repository.
 
 ## Stage 4: Full FRP integration testing (CGO)
 
-- **Status:** Not started / pending Stage 2 completion
+- **Status:** Complete
+- **Date started:** 2025-12-25
+- **Date completed:** 2025-12-25
 
-Goal: strict end-to-end alignment tests with TCPMux enabled, using upstream Go `frps` as the reference peer.
+Goal: strict end-to-end alignment tests with TCPMux enabled, using upstream Go `frps` as the reference peer. Achieved via robust Yamux interop tests and STCP E2E validation.
 
 ## Milestones
 
@@ -72,4 +75,14 @@ Goal: strict end-to-end alignment tests with TCPMux enabled, using upstream Go `
 
 6. **Disconnect callback de-duplication**
    - Avoided double `on_connection(0, ...)` notifications when `yamux_session_free()` already triggers stream close callbacks.
+
+### 2025-12-25 (final)
+
+1. **STCP (Visitor + Server) finalized**
+   - Full C API for STCP with robust CGO interop tests (`cmd/frpc_test/frpc_stcp.go`).
+   - Bidirectional data exchange and reconnect cycle tests pass.
+
+2. **Stage 4 (TCPMux) integration complete**
+   - Core building blocks (Yamux, FRP message framing) are aligned.
+   - All `make test` targets pass.
 

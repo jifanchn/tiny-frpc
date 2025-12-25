@@ -503,7 +503,7 @@ int frpc_stcp_visitor_connect(frpc_stcp_proxy_t* proxy) {
     }
     
     fprintf(stdout, "Connecting to server '%s' with sign key: %s, timestamp: %lld\n", 
-            proxy->config.server_name, sign_key, timestamp);
+            proxy->config.server_name, sign_key, (long long)timestamp);
     
     // TODO: build and send NewVisitorConn message
     // {

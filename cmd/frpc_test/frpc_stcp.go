@@ -262,7 +262,7 @@ func init() {
 	flag.StringVar(&localAddr, "local-addr", "127.0.0.1", "Local service address for Server mode")
 	flag.IntVar(&localPort, "local-port", 8080, "Local service port for Server mode")
 	flag.StringVar(&bindAddr, "bind-addr", "127.0.0.1", "Bind address for Visitor mode")
-	flag.IntVar(&bindPort, "bind-port", 9090, "Bind port for Visitor mode")
+	flag.IntVar(&bindPort, "bind-port", 9999, "Bind port for Visitor mode")
 	flag.BoolVar(&runFRPS, "run-frps", true, "Run embedded FRPS server")
 	flag.StringVar(&testMode, "test-mode", "bidirectional", "Test mode: basic or bidirectional")
 	flag.StringVar(&frpsLogLevel, "frps-log-level", "info", "FRPS log level: trace/debug/info/warn/error")

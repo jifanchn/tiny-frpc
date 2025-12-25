@@ -167,9 +167,9 @@ TINY_FRPC_VERBOSE=1 make test   # Enable C-side diagnostics
 | Stage | Description                        | Status      |
 |-------|------------------------------------|-------------|
 | 1     | Yamux implementation + CGO tests   | ✅ Complete |
-| 2     | FRP STCP (Visitor + Server)        | 🚧 In Progress |
+| 2     | FRP STCP (Visitor + Server)        | ✅ Complete |
 | 3     | POSIX wrapper layer                | ✅ Complete |
-| 4     | Full FRP integration (TCPMux)      | ⏳ Pending  |
+| 4     | Full FRP integration (TCPMux)      | ✅ Complete |
 
 ## 📖 Documentation
 
