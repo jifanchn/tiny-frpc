@@ -103,8 +103,8 @@ jobs:
           cp build/*.a artifacts/darwin-amd64/lib/
           # Shared library for bindings
           cp build/libfrpc-bindings.so artifacts/darwin-amd64/lib/
-          # Demo binaries
-          cp build/demo_stcp_frps build/demo_stcp_server build/demo_stcp_visitor build/demo_stcp_local_client artifacts/darwin-amd64/demo/
+          # Demo binaries (exclude .dSYM directories)
+          find build -maxdepth 1 -name 'demo_stcp_*' -type f -exec cp {} artifacts/darwin-amd64/demo/ \;
           # Bindings source
           cp -r bindings/python artifacts/darwin-amd64/bindings/
           cp -r bindings/nodejs artifacts/darwin-amd64/bindings/
@@ -156,8 +156,8 @@ jobs:
           cp build/*.a artifacts/darwin-arm64/lib/
           # Shared library for bindings
           cp build/libfrpc-bindings.so artifacts/darwin-arm64/lib/
-          # Demo binaries
-          cp build/demo_stcp_frps build/demo_stcp_server build/demo_stcp_visitor build/demo_stcp_local_client artifacts/darwin-arm64/demo/
+          # Demo binaries (exclude .dSYM directories)
+          find build -maxdepth 1 -name 'demo_stcp_*' -type f -exec cp {} artifacts/darwin-arm64/demo/ \;
           # Bindings source
           cp -r bindings/python artifacts/darwin-arm64/bindings/
           cp -r bindings/nodejs artifacts/darwin-arm64/bindings/
