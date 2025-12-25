@@ -37,6 +37,7 @@ jobs:
         run: |
           make install
           make all
+          make bindings-shared
           make demo-stcp
 
       - name: Test
@@ -44,12 +45,24 @@ jobs:
 
       - name: Package artifacts
         run: |
-          mkdir -p artifacts/linux-amd64
-          cp build/demo_stcp_frps artifacts/linux-amd64/
-          cp build/demo_stcp_server artifacts/linux-amd64/
-          cp build/demo_stcp_visitor artifacts/linux-amd64/
-          cp build/demo_stcp_local_client artifacts/linux-amd64/
-          cp demo/stcp/README.md artifacts/linux-amd64/
+          mkdir -p artifacts/linux-amd64/{lib,bindings,demo}
+          # Static libraries
+          cp build/*.a artifacts/linux-amd64/lib/
+          # Shared library for bindings
+          cp build/libfrpc-bindings.so artifacts/linux-amd64/lib/
+          # Demo binaries
+          cp build/demo_stcp_* artifacts/linux-amd64/demo/
+          # Bindings source
+          cp -r bindings/python artifacts/linux-amd64/bindings/
+          cp -r bindings/nodejs artifacts/linux-amd64/bindings/
+          cp -r bindings/rust artifacts/linux-amd64/bindings/
+          cp bindings/README.md artifacts/linux-amd64/bindings/
+          # Include headers
+          mkdir -p artifacts/linux-amd64/include
+          cp tiny-frpc/include/*.h artifacts/linux-amd64/include/
+          # Documentation
+          cp demo/stcp/README.md artifacts/linux-amd64/demo/
+          cp README.md artifacts/linux-amd64/
           cd artifacts && tar -czvf ${PROJECT_NAME}-linux-amd64.tar.gz linux-amd64
 
       - name: Upload artifacts
@@ -77,6 +90,7 @@ jobs:
         run: |
           make install
           make all
+          make bindings-shared
           make demo-stcp
 
       - name: Test
@@ -84,12 +98,24 @@ jobs:
 
       - name: Package artifacts
         run: |
-          mkdir -p artifacts/darwin-amd64
-          cp build/demo_stcp_frps artifacts/darwin-amd64/
-          cp build/demo_stcp_server artifacts/darwin-amd64/
-          cp build/demo_stcp_visitor artifacts/darwin-amd64/
-          cp build/demo_stcp_local_client artifacts/darwin-amd64/
-          cp demo/stcp/README.md artifacts/darwin-amd64/
+          mkdir -p artifacts/darwin-amd64/{lib,bindings,demo}
+          # Static libraries
+          cp build/*.a artifacts/darwin-amd64/lib/
+          # Shared library for bindings
+          cp build/libfrpc-bindings.so artifacts/darwin-amd64/lib/
+          # Demo binaries
+          cp build/demo_stcp_* artifacts/darwin-amd64/demo/
+          # Bindings source
+          cp -r bindings/python artifacts/darwin-amd64/bindings/
+          cp -r bindings/nodejs artifacts/darwin-amd64/bindings/
+          cp -r bindings/rust artifacts/darwin-amd64/bindings/
+          cp bindings/README.md artifacts/darwin-amd64/bindings/
+          # Include headers
+          mkdir -p artifacts/darwin-amd64/include
+          cp tiny-frpc/include/*.h artifacts/darwin-amd64/include/
+          # Documentation
+          cp demo/stcp/README.md artifacts/darwin-amd64/demo/
+          cp README.md artifacts/darwin-amd64/
           cd artifacts && tar -czvf ${PROJECT_NAME}-darwin-amd64.tar.gz darwin-amd64
 
       - name: Upload artifacts
@@ -117,6 +143,7 @@ jobs:
         run: |
           make install
           make all
+          make bindings-shared
           make demo-stcp
 
       - name: Test
@@ -124,12 +151,24 @@ jobs:
 
       - name: Package artifacts
         run: |
-          mkdir -p artifacts/darwin-arm64
-          cp build/demo_stcp_frps artifacts/darwin-arm64/
-          cp build/demo_stcp_server artifacts/darwin-arm64/
-          cp build/demo_stcp_visitor artifacts/darwin-arm64/
-          cp build/demo_stcp_local_client artifacts/darwin-arm64/
-          cp demo/stcp/README.md artifacts/darwin-arm64/
+          mkdir -p artifacts/darwin-arm64/{lib,bindings,demo}
+          # Static libraries
+          cp build/*.a artifacts/darwin-arm64/lib/
+          # Shared library for bindings
+          cp build/libfrpc-bindings.so artifacts/darwin-arm64/lib/
+          # Demo binaries
+          cp build/demo_stcp_* artifacts/darwin-arm64/demo/
+          # Bindings source
+          cp -r bindings/python artifacts/darwin-arm64/bindings/
+          cp -r bindings/nodejs artifacts/darwin-arm64/bindings/
+          cp -r bindings/rust artifacts/darwin-arm64/bindings/
+          cp bindings/README.md artifacts/darwin-arm64/bindings/
+          # Include headers
+          mkdir -p artifacts/darwin-arm64/include
+          cp tiny-frpc/include/*.h artifacts/darwin-arm64/include/
+          # Documentation
+          cp demo/stcp/README.md artifacts/darwin-arm64/demo/
+          cp README.md artifacts/darwin-arm64/
           cd artifacts && tar -czvf ${PROJECT_NAME}-darwin-arm64.tar.gz darwin-arm64
 
       - name: Upload artifacts
@@ -139,12 +178,10 @@ jobs:
           path: artifacts/${{ env.PROJECT_NAME }}-darwin-arm64.tar.gz
 
   # ============================================================================
-  # Windows amd64 (cross-compile from Linux)
-  # Note: Windows support is experimental - POSIX wrapper layer not yet ported
+  # Windows amd64 (cross-compile from Linux using mingw)
   # ============================================================================
   build-windows-amd64:
     runs-on: ubuntu-latest
-    continue-on-error: true  # Windows not fully supported yet
     steps:
       - uses: actions/checkout@v4
         with:
@@ -155,20 +192,35 @@ jobs:
 
       - name: Build
         run: |
-          make CC=x86_64-w64-mingw32-gcc LDFLAGS="-static" all
-          make CC=x86_64-w64-mingw32-gcc LDFLAGS="-static" demo-stcp || true
+          # Build static libraries using Windows wrapper
+          make CC=x86_64-w64-mingw32-gcc WRAPPER_DIR=wrapper/windows LDFLAGS="-static -lws2_32" all
+          # Build demo binaries (best-effort)
+          make CC=x86_64-w64-mingw32-gcc WRAPPER_DIR=wrapper/windows LDFLAGS="-static -lws2_32" demo-stcp || true
 
       - name: Package artifacts
         run: |
-          mkdir -p artifacts/windows-amd64
+          mkdir -p artifacts/windows-amd64/{lib,bindings,demo}
+          # Demo binaries
           for f in demo_stcp_frps demo_stcp_server demo_stcp_visitor demo_stcp_local_client; do
             if [ -f "build/$f" ]; then
-              cp "build/$f" "artifacts/windows-amd64/${f}.exe"
+              cp "build/$f" "artifacts/windows-amd64/demo/${f}.exe"
             elif [ -f "build/${f}.exe" ]; then
-              cp "build/${f}.exe" "artifacts/windows-amd64/"
+              cp "build/${f}.exe" "artifacts/windows-amd64/demo/"
             fi
           done
-          cp demo/stcp/README.md artifacts/windows-amd64/
+          # Static libraries
+          cp build/*.a artifacts/windows-amd64/lib/ 2>/dev/null || true
+          # Bindings source
+          cp -r bindings/python artifacts/windows-amd64/bindings/
+          cp -r bindings/nodejs artifacts/windows-amd64/bindings/
+          cp -r bindings/rust artifacts/windows-amd64/bindings/
+          cp bindings/README.md artifacts/windows-amd64/bindings/
+          # Include headers
+          mkdir -p artifacts/windows-amd64/include
+          cp tiny-frpc/include/*.h artifacts/windows-amd64/include/
+          # Documentation
+          cp demo/stcp/README.md artifacts/windows-amd64/demo/
+          cp README.md artifacts/windows-amd64/
           cd artifacts && zip -r ${PROJECT_NAME}-windows-amd64.zip windows-amd64
 
       - name: Upload artifacts
@@ -202,7 +254,16 @@ jobs:
           body: |
             ## tiny-frpc ${{ github.ref_name }}
             
-            Cross-platform STCP demo binaries.
+            Cross-platform FRP client library with STCP support.
+            
+            ### Package Contents
+            
+            Each archive includes:
+            - `lib/` - Static libraries (`.a`) and shared library (`libfrpc-bindings.so`)
+            - `include/` - C header files for embedding
+            - `bindings/` - Language bindings (Python, Node.js, Rust)
+            - `demo/` - STCP demo binaries
+            - `README.md` - Documentation
             
             ### Downloads
             | Platform | Architecture | File |

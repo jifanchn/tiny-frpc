@@ -4,10 +4,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
-#include <errno.h>
-#include <ctype.h>
-#include <sys/select.h>
 
 // FRP uses golib/msg/json framing: 1 byte type + 8 bytes big-endian int64 length + JSON payload
 #define FRPC_MAX_MSG_LENGTH 10240
@@ -65,7 +61,7 @@ static int frpc_write_all(int fd, const void* buf, size_t len) {
     while (off < len) {
         ssize_t n = wrapped_write(fd, p + off, len - off);
         if (n < 0) {
-            if (errno == EINTR) {
+            if (wrapped_get_errno() == WRAPPED_EINTR) {
                 continue;
             }
             return -1;
@@ -93,8 +89,8 @@ static int frpc_wait_readable(int fd, int timeout_ms) {
 
     int ret;
     do {
-        ret = select(fd + 1, &rfds, NULL, NULL, ptv);
-    } while (ret < 0 && errno == EINTR);
+        ret = wrapped_select(fd + 1, &rfds, NULL, NULL, ptv);
+    } while (ret < 0 && wrapped_get_errno() == WRAPPED_EINTR);
     return ret; // 0 timeout, 1 ready, <0 error
 }
 
@@ -104,7 +100,7 @@ static int frpc_read_exact_timeout(int fd, void* buf, size_t len, int timeout_ms
     while (off < len) {
         int sel = frpc_wait_readable(fd, timeout_ms);
         if (sel == 0) {
-            errno = ETIMEDOUT;
+            wrapped_set_errno(WRAPPED_ETIMEDOUT);
             return -1;
         }
         if (sel < 0) {
@@ -113,13 +109,13 @@ static int frpc_read_exact_timeout(int fd, void* buf, size_t len, int timeout_ms
 
         ssize_t n = wrapped_read(fd, p + off, len - off);
         if (n < 0) {
-            if (errno == EINTR) {
+            if (wrapped_get_errno() == WRAPPED_EINTR) {
                 continue;
             }
             return -1;
         }
         if (n == 0) {
-            errno = ECONNRESET;
+            wrapped_set_errno(WRAPPED_ECONNRESET);
             return -1; // closed
         }
         off += (size_t)n;
@@ -181,7 +177,7 @@ static int frpc_json_get_string(const char* json, size_t json_len, const char* k
 
     p += strlen(pattern);
     const char* end = json + json_len;
-    while (p < end && isspace((unsigned char)*p)) p++;
+    while (p < end && wrapped_isspace((unsigned char)*p)) p++;
     if (p >= end || *p != '"') return -1;
     p++; // skip opening quote
 
@@ -367,7 +363,7 @@ int frpc_client_connect(frpc_client_t* client) {
     fprintf(stdout, "frpc_client_connect: dial ok, fd=%d\n", fd);
 
     // Login message (TypeLogin = 'o')
-    int64_t ts = (int64_t)time(NULL);
+    int64_t ts = (int64_t)wrapped_time(NULL);
     char privilege_key[33] = {0};
     if (client->config.token && client->config.token[0] != '\0') {
         if (tools_get_auth_key(client->config.token, ts, privilege_key) != 0) {
@@ -392,7 +388,7 @@ int frpc_client_connect(frpc_client_t* client) {
     }
 
     if (frpc_send_msg_fd(fd, (uint8_t)'o', login_json, (size_t)login_len) != 0) {
-        fprintf(stderr, "frpc_client_connect: send login failed (errno=%d)\n", errno);
+        fprintf(stderr, "frpc_client_connect: send login failed (errno=%d)\n", wrapped_get_errno());
         wrapped_close(fd);
         return FRPC_ERROR_NETWORK;
     }
@@ -402,7 +398,7 @@ int frpc_client_connect(frpc_client_t* client) {
     char* resp_json = NULL;
     size_t resp_len = 0;
     if (frpc_read_msg_fd(fd, &resp_type, &resp_json, &resp_len, 10000) != 0) {
-        fprintf(stderr, "frpc_client_connect: read loginresp failed (errno=%d)\n", errno);
+        fprintf(stderr, "frpc_client_connect: read loginresp failed (errno=%d)\n", wrapped_get_errno());
         wrapped_close(fd);
         return FRPC_ERROR_NETWORK;
     }

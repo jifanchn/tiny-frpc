@@ -3,6 +3,7 @@
 #include <stdarg.h> // For va_list, va_start, va_end in wrapped_fcntl
 #include <stdio.h>  // For perror, printf (temporary for debugging)
 #include <stdlib.h> // For getenv
+#include <ctype.h>  // For isspace
 
 // Thin wrapper functions around POSIX syscalls.
 // In the future, these may grow more robust error handling or logging.
@@ -136,6 +137,29 @@ int wrapped_fcntl(int fd, int cmd, ...) {
         }
     }
     return ret;
+}
+
+int wrapped_select(int nfds, fd_set *readfds, fd_set *writefds,
+                   fd_set *exceptfds, struct timeval *timeout) {
+    int ret = select(nfds, readfds, writefds, exceptfds, timeout);
+    // Don't call perror on error; EINTR is expected and caller handles it.
+    return ret;
+}
+
+time_t wrapped_time(time_t *tloc) {
+    return time(tloc);
+}
+
+int wrapped_isspace(int c) {
+    return isspace(c);
+}
+
+int wrapped_get_errno(void) {
+    return errno;
+}
+
+void wrapped_set_errno(int err) {
+    errno = err;
 }
 
 int wrapped_getaddrinfo(const char *node, const char *service,

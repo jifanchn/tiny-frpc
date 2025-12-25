@@ -28,7 +28,10 @@ UNAME_S := $(shell uname -s)
 TINY_FRPC_DIR := tiny-frpc
 SOURCE_DIR := $(TINY_FRPC_DIR)/source
 INCLUDE_DIR := $(TINY_FRPC_DIR)/include
-WRAPPER_DIR := wrapper/linux
+
+# Wrapper directory: defaults to Linux, override for Windows builds:
+#   make WRAPPER_DIR=wrapper/windows CC=x86_64-w64-mingw32-gcc all
+WRAPPER_DIR ?= wrapper/linux
 
 BUILD_DIR_NORMAL := build
 BUILD_DIR_COV := build-cov

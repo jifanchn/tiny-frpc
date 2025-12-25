@@ -8,7 +8,6 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <time.h>
-#include <errno.h>
 
 // Internal structures
 typedef struct frpc_client_wrapper {
