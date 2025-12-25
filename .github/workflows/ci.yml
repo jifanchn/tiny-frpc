@@ -40,8 +40,11 @@ jobs:
           make bindings-shared
           make demo-stcp
 
-      - name: Test
+      - name: Test C and CGO
         run: make test
+
+      - name: Test Bindings (Python, Node.js, Rust)
+        run: make test-bindings
 
       - name: Package artifacts
         run: |
@@ -93,8 +96,11 @@ jobs:
           make bindings-shared
           make demo-stcp
 
-      - name: Test
+      - name: Test C and CGO
         run: make test
+
+      - name: Test Bindings (Python, Node.js, Rust)
+        run: make test-bindings
 
       - name: Package artifacts
         run: |
@@ -128,7 +134,7 @@ jobs:
   # macOS arm64 (Apple Silicon)
   # ============================================================================
   build-darwin-arm64:
-    runs-on: macos-14  # Apple Silicon
+    runs-on: macos-15  # Apple Silicon
     steps:
       - uses: actions/checkout@v4
         with:
@@ -146,8 +152,11 @@ jobs:
           make bindings-shared
           make demo-stcp
 
-      - name: Test
+      - name: Test C and CGO
         run: make test
+
+      - name: Test Bindings (Python, Node.js, Rust)
+        run: make test-bindings
 
       - name: Package artifacts
         run: |
@@ -178,50 +187,75 @@ jobs:
           path: artifacts/${{ env.PROJECT_NAME }}-darwin-arm64.tar.gz
 
   # ============================================================================
-  # Windows amd64 (cross-compile from Linux using mingw)
+  # Windows amd64 (native build and test using MSYS2)
   # ============================================================================
   build-windows-amd64:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Install cross-compiler
-        run: sudo apt-get update && sudo apt-get install -y make gcc-mingw-w64-x86-64 zip
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-go
+            mingw-w64-ucrt-x86_64-python
+            mingw-w64-ucrt-x86_64-python-pip
+            mingw-w64-ucrt-x86_64-rust
+            make
+            zip
 
       - name: Build
         run: |
-          # Build static libraries using Windows wrapper
-          make CC=x86_64-w64-mingw32-gcc WRAPPER_DIR=wrapper/windows LDFLAGS="-static -lws2_32" all
-          # Build demo binaries (best-effort)
-          make CC=x86_64-w64-mingw32-gcc WRAPPER_DIR=wrapper/windows LDFLAGS="-static -lws2_32" demo-stcp || true
+          make WRAPPER_DIR=wrapper/windows LDFLAGS="-lws2_32" install
+          make WRAPPER_DIR=wrapper/windows LDFLAGS="-lws2_32" all
+          make WRAPPER_DIR=wrapper/windows LDFLAGS="-lws2_32" bindings-shared
+          make WRAPPER_DIR=wrapper/windows LDFLAGS="-lws2_32" demo-stcp || true
+
+      - name: Test C and CGO
+        run: make WRAPPER_DIR=wrapper/windows LDFLAGS="-lws2_32" test
+
+      - name: Test Bindings (Python and Rust)
+        run: |
+          # Python bindings test
+          make WRAPPER_DIR=wrapper/windows LDFLAGS="-lws2_32" python || true
+          # Rust bindings test
+          make WRAPPER_DIR=wrapper/windows LDFLAGS="-lws2_32" rust || true
+          # Note: Node.js binding test skipped on Windows due to node-gyp complexity
 
       - name: Package artifacts
+        shell: pwsh
         run: |
-          mkdir -p artifacts/windows-amd64/{lib,bindings,demo}
-          # Demo binaries
-          for f in demo_stcp_frps demo_stcp_server demo_stcp_visitor demo_stcp_local_client; do
-            if [ -f "build/$f" ]; then
-              cp "build/$f" "artifacts/windows-amd64/demo/${f}.exe"
-            elif [ -f "build/${f}.exe" ]; then
-              cp "build/${f}.exe" "artifacts/windows-amd64/demo/"
-            fi
-          done
+          New-Item -ItemType Directory -Force -Path artifacts/windows-amd64/lib
+          New-Item -ItemType Directory -Force -Path artifacts/windows-amd64/bindings
+          New-Item -ItemType Directory -Force -Path artifacts/windows-amd64/demo
+          New-Item -ItemType Directory -Force -Path artifacts/windows-amd64/include
           # Static libraries
-          cp build/*.a artifacts/windows-amd64/lib/ 2>/dev/null || true
+          Copy-Item build/*.a artifacts/windows-amd64/lib/ -ErrorAction SilentlyContinue
+          # Demo binaries
+          Get-ChildItem build/demo_stcp_* -File | ForEach-Object {
+            $destName = if ($_.Extension -eq '.exe') { $_.Name } else { $_.Name + '.exe' }
+            Copy-Item $_.FullName "artifacts/windows-amd64/demo/$destName"
+          }
           # Bindings source
-          cp -r bindings/python artifacts/windows-amd64/bindings/
-          cp -r bindings/nodejs artifacts/windows-amd64/bindings/
-          cp -r bindings/rust artifacts/windows-amd64/bindings/
-          cp bindings/README.md artifacts/windows-amd64/bindings/
+          Copy-Item -Recurse bindings/python artifacts/windows-amd64/bindings/
+          Copy-Item -Recurse bindings/nodejs artifacts/windows-amd64/bindings/
+          Copy-Item -Recurse bindings/rust artifacts/windows-amd64/bindings/
+          Copy-Item bindings/README.md artifacts/windows-amd64/bindings/
           # Include headers
-          mkdir -p artifacts/windows-amd64/include
-          cp tiny-frpc/include/*.h artifacts/windows-amd64/include/
+          Copy-Item tiny-frpc/include/*.h artifacts/windows-amd64/include/
           # Documentation
-          cp demo/stcp/README.md artifacts/windows-amd64/demo/
-          cp README.md artifacts/windows-amd64/
-          cd artifacts && zip -r ${PROJECT_NAME}-windows-amd64.zip windows-amd64
+          Copy-Item demo/stcp/README.md artifacts/windows-amd64/demo/
+          Copy-Item README.md artifacts/windows-amd64/
+          Compress-Archive -Path artifacts/windows-amd64 -DestinationPath "artifacts/$env:PROJECT_NAME-windows-amd64.zip"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
