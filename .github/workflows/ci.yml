@@ -62,7 +62,7 @@ jobs:
   # macOS amd64 (Intel)
   # ============================================================================
   build-darwin-amd64:
-    runs-on: macos-13  # Intel Mac
+    runs-on: macos-15  # Intel Mac (macos-13 deprecated)
     steps:
       - uses: actions/checkout@v4
         with:
