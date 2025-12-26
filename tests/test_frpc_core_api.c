@@ -9,6 +9,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <signal.h>
 
 #include "../tiny-frpc/include/frpc.h"
 
@@ -324,6 +325,7 @@ static int test_frpc_client_accessors(void) {
 }
 
 int main(void) {
+    signal(SIGPIPE, SIG_IGN);
     printf("Running frpc core API tests...\n");
     int failed = 0;
 
