@@ -2,15 +2,9 @@
 
 #include "wrapper.h"
 
-#include <errno.h>
-#include <fcntl.h>
-#include <netdb.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <unistd.h>
 
 int demo_write_all(int fd, const void* buf, size_t len) {
     const uint8_t* p = (const uint8_t*)buf;
@@ -18,7 +12,7 @@ int demo_write_all(int fd, const void* buf, size_t len) {
     while (off < len) {
         ssize_t n = wrapped_write(fd, p + off, len - off);
         if (n < 0) {
-            if (errno == EINTR) {
+            if (wrapped_get_errno() == WRAPPED_EINTR) {
                 continue;
             }
             return -1;
@@ -37,7 +31,7 @@ int demo_read_exact(int fd, void* buf, size_t len) {
     while (off < len) {
         ssize_t n = wrapped_read(fd, p + off, len - off);
         if (n < 0) {
-            if (errno == EINTR) {
+            if (wrapped_get_errno() == WRAPPED_EINTR) {
                 continue;
             }
             return -1;

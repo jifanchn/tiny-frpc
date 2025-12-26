@@ -15,6 +15,7 @@
 #include <ws2tcpip.h>
 #include <windows.h>
 #include <time.h>
+#include <stdint.h>
 
 /* Note: Link with ws2_32.lib (-lws2_32 for mingw) */
 
