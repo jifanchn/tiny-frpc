@@ -445,9 +445,8 @@ struct frp_crypto_stream {
 };
 
 frp_crypto_stream_t* frp_crypto_stream_new(const char* token) {
-    if (!token || token[0] == '\0') {
-        return NULL;
-    }
+    // Allow NULL or empty token - frps uses crypto even with empty token
+    const char* token_str = token ? token : "";
     
     frp_crypto_stream_t* stream = (frp_crypto_stream_t*)malloc(sizeof(frp_crypto_stream_t));
     if (!stream) {
@@ -458,7 +457,7 @@ frp_crypto_stream_t* frp_crypto_stream_new(const char* token) {
     
     // Derive key using PBKDF2
     // FRP uses: pbkdf2.Key(key, []byte(DefaultSalt), 64, aes.BlockSize, sha1.New)
-    int ret = pbkdf2_sha1((const uint8_t*)token, strlen(token),
+    int ret = pbkdf2_sha1((const uint8_t*)token_str, strlen(token_str),
                           (const uint8_t*)FRP_CRYPTO_SALT, strlen(FRP_CRYPTO_SALT),
                           64,
                           stream->derived_key, 16);
@@ -468,18 +467,31 @@ frp_crypto_stream_t* frp_crypto_stream_new(const char* token) {
     }
     
     // Generate random IV for sending
-    // In production, this should use a proper random source
+    // Use multiple entropy sources for IV generation
     uint64_t time_ms = wrapped_get_time_ms();
-    uint8_t seed_data[32];
-    memcpy(seed_data, &time_ms, sizeof(time_ms));
-    memcpy(seed_data + 8, token, strlen(token) < 24 ? strlen(token) : 24);
+    uint8_t seed_data[64];
+    memset(seed_data, 0, sizeof(seed_data));
     
-    // Use hash of time + token as "random" IV (not cryptographically secure but works for testing)
+    // Mix in time
+    memcpy(seed_data, &time_ms, sizeof(time_ms));
+    
+    // Mix in token
+    size_t token_len = strlen(token_str);
+    if (token_len > 0) {
+        size_t copy_len = token_len < 24 ? token_len : 24;
+        memcpy(seed_data + 8, token_str, copy_len);
+    }
+    
+    // Add more entropy using a counter
+    static uint32_t counter = 0;
+    counter++;
+    memcpy(seed_data + 32, &counter, sizeof(counter));
+    
+    // Use hash of combined entropy as "random" IV
     sha1_ctx_t sha_ctx;
     uint8_t hash[SHA1_DIGEST_SIZE];
     sha1_init(&sha_ctx);
     sha1_update(&sha_ctx, seed_data, sizeof(seed_data));
-    sha1_update(&sha_ctx, (const uint8_t*)&time_ms, sizeof(time_ms));  // Add more entropy
     sha1_final(&sha_ctx, hash);
     memcpy(stream->send_iv, hash, AES_BLOCK_SIZE);
     

@@ -119,7 +119,8 @@ def test_stcp_e2e(frps: FRPSServer) -> bool:
     try:
         # === Create STCP Server ===
         print("Creating STCP server tunnel...")
-        server_client = FRPCClient("127.0.0.1", frps.bind_port, None)
+        # use_encryption=False for mock frps (mock frps doesn't support encryption)
+        server_client = FRPCClient("127.0.0.1", frps.bind_port, None, use_encryption=False)
         
         server_tunnel = server_client.create_tunnel(
             TunnelType.STCP_SERVER,
@@ -142,7 +143,7 @@ def test_stcp_e2e(frps: FRPSServer) -> bool:
         
         # === Create STCP Visitor ===
         print("\nCreating STCP visitor tunnel...")
-        visitor_client = FRPCClient("127.0.0.1", frps.bind_port, None)
+        visitor_client = FRPCClient("127.0.0.1", frps.bind_port, None, use_encryption=False)
         
         visitor_tunnel = visitor_client.create_tunnel(
             TunnelType.STCP_VISITOR,

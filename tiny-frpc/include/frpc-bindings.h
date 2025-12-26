@@ -182,6 +182,9 @@ void frpc_set_log_callback(frpc_log_callback_t callback);
 // Create a new FRPC client instance
 frpc_handle_t frpc_create(const char* server_addr, uint16_t server_port, const char* token);
 
+// Set encryption mode (default: true for real frps; set false for mock frps)
+void frpc_set_encryption(frpc_handle_t handle, bool enabled);
+
 // Destroy FRPC client instance
 void frpc_destroy(frpc_handle_t handle);
 

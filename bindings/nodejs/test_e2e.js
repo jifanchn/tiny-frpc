@@ -160,7 +160,8 @@ async function testStcpE2E(frps) {
   try {
     // === Create STCP Server ===
     console.log('Creating STCP server tunnel...');
-    serverClient = new FRPCClient('127.0.0.1', frps.bindPort, null);
+    // useEncryption: false for mock frps (mock frps doesn't support encryption)
+    serverClient = new FRPCClient('127.0.0.1', frps.bindPort, null, { useEncryption: false });
 
     serverTunnel = serverClient.createTunnel(TunnelType.STCP_SERVER, 'e2e_stcp_server', {
       secretKey: 'e2e_secret',
@@ -181,7 +182,7 @@ async function testStcpE2E(frps) {
 
     // === Create STCP Visitor ===
     console.log('\nCreating STCP visitor tunnel...');
-    visitorClient = new FRPCClient('127.0.0.1', frps.bindPort, null);
+    visitorClient = new FRPCClient('127.0.0.1', frps.bindPort, null, { useEncryption: false });
 
     const visitorBindPort = await findFreePort();
     visitorTunnel = visitorClient.createTunnel(TunnelType.STCP_VISITOR, 'e2e_stcp_visitor', {

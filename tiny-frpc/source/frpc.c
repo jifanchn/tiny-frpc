@@ -326,6 +326,12 @@ frpc_client_t* frpc_client_new(const frpc_config_t* config, void* user_ctx) {
     return client;
 }
 
+// Set encryption mode for the client
+void frpc_client_set_encryption(frpc_client_t* client, bool enabled) {
+    if (!client) return;
+    client->config.use_encryption = enabled;
+}
+
 // Free an FRP client instance
 void frpc_client_free(frpc_client_t* client) {
     if (!client) return;
@@ -459,18 +465,29 @@ int frpc_client_connect(frpc_client_t* client) {
     client->last_heartbeat_time = tools_get_time_ms();
 
     // Initialize crypto stream for encrypted messages after login
-    if (client->config.token && client->config.token[0] != '\0') {
+    // Real frps uses encryption after login; set use_encryption=false for mock frps
+    if (client->config.use_encryption) {
         if (client->crypto_stream) {
             frp_crypto_stream_free(client->crypto_stream);
         }
-        client->crypto_stream = frp_crypto_stream_new(client->config.token);
+        const char* token_for_crypto = (client->config.token && client->config.token[0] != '\0') 
+                                       ? client->config.token 
+                                       : "";
+        client->crypto_stream = frp_crypto_stream_new(token_for_crypto);
         if (!client->crypto_stream) {
             fprintf(stderr, "frpc_client_connect: failed to create crypto stream\n");
             ret = FRPC_ERROR_INTERNAL;
             goto out_login_resp;
         }
         if (frpc_verbose_enabled()) {
-            fprintf(stdout, "frpc_client_connect: crypto stream initialized\n");
+            fprintf(stdout, "frpc_client_connect: crypto stream initialized (token=%s)\n", 
+                    token_for_crypto[0] ? "yes" : "empty");
+        }
+    } else {
+        // No encryption - used with mock frps
+        client->crypto_stream = NULL;
+        if (frpc_verbose_enabled()) {
+            fprintf(stdout, "frpc_client_connect: encryption disabled\n");
         }
     }
 

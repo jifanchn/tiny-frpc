@@ -176,6 +176,8 @@ _lib.frpc_set_log_callback.restype = None
 
 _lib.frpc_create.argtypes = [c_char_p, c_uint16, c_char_p]
 _lib.frpc_create.restype = c_void_p
+_lib.frpc_set_encryption.argtypes = [c_void_p, c_bool]
+_lib.frpc_set_encryption.restype = None
 _lib.frpc_destroy.argtypes = [c_void_p]
 _lib.frpc_destroy.restype = None
 
@@ -228,10 +230,11 @@ class FRPCException(Exception):
 class FRPCClient:
     """FRPC Client for connecting to FRP servers"""
     
-    def __init__(self, server_addr: str, server_port: int, token: str = None):
+    def __init__(self, server_addr: str, server_port: int, token: str = None, use_encryption: bool = True):
         self.server_addr = server_addr
         self.server_port = server_port
         self.token = token
+        self.use_encryption = use_encryption
         self._handle = None
         self._tunnels = {}
         self._event_thread = None
@@ -244,6 +247,9 @@ class FRPCClient:
         self._handle = _lib.frpc_create(addr_bytes, server_port, token_bytes)
         if not self._handle:
             raise FRPCException(ErrorCode.MEMORY, "Failed to create FRPC client")
+        
+        # Set encryption mode
+        _lib.frpc_set_encryption(self._handle, use_encryption)
     
     def __del__(self):
         self.close()

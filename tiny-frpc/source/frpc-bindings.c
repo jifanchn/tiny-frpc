@@ -420,6 +420,7 @@ frpc_handle_t frpc_create(const char* server_addr, uint16_t server_port, const c
     wrapper->config.token = token ? strdup(token) : NULL;
     wrapper->config.heartbeat_interval = 30;
     wrapper->config.tls_enable = false;
+    wrapper->config.use_encryption = true;  // Default to true for real frps compatibility
     
     // Create FRP client
     wrapper->client = frpc_client_new(&wrapper->config, wrapper);
@@ -435,6 +436,20 @@ frpc_handle_t frpc_create(const char* server_addr, uint16_t server_port, const c
     internal_log(FRPC_LOG_INFO, "Created FRP client for %s:%d", server_addr, server_port);
     
     return (frpc_handle_t)wrapper;
+}
+
+void frpc_set_encryption(frpc_handle_t handle, bool enabled) {
+    if (!handle) return;
+    
+    frpc_client_wrapper_t* wrapper = (frpc_client_wrapper_t*)handle;
+    wrapper->config.use_encryption = enabled;
+    
+    // Also update the client's internal config
+    if (wrapper->client) {
+        frpc_client_set_encryption(wrapper->client, enabled);
+    }
+    
+    internal_log(FRPC_LOG_DEBUG, "Encryption %s", enabled ? "enabled" : "disabled");
 }
 
 void frpc_destroy(frpc_handle_t handle) {

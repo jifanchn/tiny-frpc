@@ -277,6 +277,20 @@ static napi_value js_client_is_connected(napi_env env, napi_callback_info info) 
     return napi_bool(env, frpc_is_connected(w->handle));
 }
 
+static napi_value js_client_set_encryption(napi_env env, napi_callback_info info) {
+    size_t argc = 2;
+    napi_value argv[2];
+    NAPI_CALL(env, napi_get_cb_info(env, info, &argc, argv, NULL, NULL));
+    if (argc < 2) return js_undefined(env);
+    client_wrap_t* w = unwrap_client(env, argv[0]);
+    if (!w || w->destroyed || !w->handle) return js_undefined(env);
+    
+    bool enabled = true;
+    napi_get_value_bool(env, argv[1], &enabled);
+    frpc_set_encryption(w->handle, enabled);
+    return js_undefined(env);
+}
+
 static napi_value js_process_events(napi_env env, napi_callback_info info) {
     size_t argc = 1;
     napi_value argv[1];
@@ -583,6 +597,7 @@ static napi_value init(napi_env env, napi_value exports) {
         { "clientConnect", 0, js_client_connect, 0, 0, 0, napi_default, 0 },
         { "clientDisconnect", 0, js_client_disconnect, 0, 0, 0, napi_default, 0 },
         { "clientIsConnected", 0, js_client_is_connected, 0, 0, 0, napi_default, 0 },
+        { "clientSetEncryption", 0, js_client_set_encryption, 0, 0, 0, napi_default, 0 },
         { "processEvents", 0, js_process_events, 0, 0, 0, napi_default, 0 },
         { "createTunnel", 0, js_create_tunnel, 0, 0, 0, napi_default, 0 },
         { "destroyTunnel", 0, js_destroy_tunnel, 0, 0, 0, napi_default, 0 },

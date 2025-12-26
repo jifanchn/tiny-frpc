@@ -12,6 +12,7 @@ typedef struct frpc_config_s {
     const char* token;             // Authentication token (if required)
     uint32_t heartbeat_interval;   // Heartbeat interval (seconds)
     bool tls_enable;               // Whether to enable TLS
+    bool use_encryption;           // Whether to use encryption after login (default: true)
 } frpc_config_t;
 
 // FRP client instance (opaque pointer)
@@ -41,6 +42,9 @@ frpc_client_t* frpc_client_new(const frpc_config_t* config, void* user_ctx);
 
 // Free FRP client instance
 void frpc_client_free(frpc_client_t* client);
+
+// Set encryption mode for the client (before connect)
+void frpc_client_set_encryption(frpc_client_t* client, bool enabled);
 
 // Connect to FRP server
 int frpc_client_connect(frpc_client_t* client);

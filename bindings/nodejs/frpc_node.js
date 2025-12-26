@@ -51,11 +51,15 @@ class FRPCError extends Error {
 }
 
 class FRPCClient extends EventEmitter {
-  constructor(serverAddr, serverPort, token = null) {
+  constructor(serverAddr, serverPort, token = null, options = {}) {
     super();
     this._handle = native.createClient(serverAddr, serverPort, token);
     this._tunnels = new Map();
     this._eventTimer = null;
+    
+    // Set encryption (default true for real FRPS, set false for mock FRPS)
+    const useEncryption = options.useEncryption !== undefined ? options.useEncryption : true;
+    native.clientSetEncryption(this._handle, useEncryption);
   }
 
   connect() {
