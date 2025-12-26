@@ -53,6 +53,7 @@ int wrapped_select(int nfds, fd_set *readfds, fd_set *writefds,
 /* Time operations */
 time_t wrapped_time(time_t *tloc);
 uint64_t wrapped_get_time_ms(void);
+void wrapped_usleep(unsigned int usec);
 
 /* Character classification */
 int wrapped_isspace(int c);

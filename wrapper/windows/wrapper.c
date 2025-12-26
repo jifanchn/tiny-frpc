@@ -216,6 +216,10 @@ uint64_t wrapped_get_time_ms(void) {
     return GetTickCount64();
 }
 
+void wrapped_usleep(unsigned int usec) {
+    Sleep(usec / 1000);  /* Convert microseconds to milliseconds */
+}
+
 int wrapped_isspace(int c) {
     return isspace(c);
 }

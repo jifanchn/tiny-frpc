@@ -4,7 +4,6 @@
 package main
 
 /*
-#cgo CFLAGS: -I../../tiny-frpc/include
 #cgo LDFLAGS: -L../../build -lfrpc -lyamux -lcrypto -ltools -lwrapper
 
 #include <stdlib.h>

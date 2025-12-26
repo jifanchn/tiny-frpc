@@ -4,7 +4,7 @@
 package main
 
 /*
-#cgo CFLAGS: -I../../tiny-frpc/include
+#cgo LDFLAGS: -L../../build -lyamux -ltools -lwrapper -lm
 #include <stdlib.h>
 */
 import "C"
