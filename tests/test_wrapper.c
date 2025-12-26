@@ -4,7 +4,7 @@
 #include <errno.h>
 #include <fcntl.h>
 
-#include "../wrapper/linux/wrapper.h"
+#include "wrapper.h"
 
 #include <sys/socket.h>
 #include <netinet/in.h>

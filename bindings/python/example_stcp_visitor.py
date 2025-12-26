@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Example: STCP Server using Python FRPC bindings
-This example creates an STCP server that forwards connections to a local service.
+Example: STCP Visitor using Python FRPC bindings
+This example acts as a client (visitor) that connects to a remote STCP service.
 """
 
 import sys
 import time
-import signal
+import socket
 import threading
 from frpc_python import FRPCClient, TunnelType, LogLevel, set_log_callback, cleanup
 
@@ -22,29 +22,32 @@ def log_handler(level, message):
 
 def on_data_received(data):
     """Handle data received from tunnel"""
-    print(f"Server received data: {data.decode('utf-8', errors='ignore')}")
+    print(f"Visitor received data: {data.decode('utf-8', errors='ignore')}")
 
 def on_connection_changed(connected, error_code):
     """Handle connection status changes"""
     if connected:
-        print("Server tunnel connected successfully")
+        print("Visitor tunnel connected successfully")
     else:
-        print(f"Server tunnel disconnected (error: {error_code})")
+        print(f"Visitor tunnel disconnected (error: {error_code})")
 
 def main():
     # Configuration
     server_addr = "127.0.0.1"
     server_port = 7000
     token = None  # No token for testing; set actual token if frps requires authentication
-    tunnel_name = "python_stcp_server"
-    secret_key = "python_secret"
-    local_addr = "127.0.0.1"
-    local_port = 8080
     
-    print("Python FRPC STCP Server Example")
+    # STCP Visitor Config
+    tunnel_name = "python_stcp_visitor"
+    server_name = "python_stcp_server" # Must match the server's tunnel name
+    secret_key = "python_secret"       # Must match the server's secret
+    bind_addr = "127.0.0.1"
+    bind_port = 9090
+    
+    print("Python FRPC STCP Visitor Example")
     print(f"Connecting to FRP server: {server_addr}:{server_port}")
-    print(f"Tunnel: {tunnel_name}")
-    print(f"Local service: {local_addr}:{local_port}")
+    print(f"Target Tunnel: {server_name}")
+    print(f"Listening on: {bind_addr}:{bind_port}")
     print("Press Ctrl+C to exit\n")
     
     # Set up logging
@@ -57,14 +60,17 @@ def main():
         # Create FRPC client
         client = FRPCClient(server_addr, server_port, token)
         
-        # Create STCP server tunnel
+        # Create STCP visitor tunnel
+        # Note: 'data_callback' is optional for visitors. 
+        # If you want to intercept data transparently, you can use it,
+        # but normally visitors just open a local port (bind_port).
         tunnel = client.create_tunnel(
-            TunnelType.STCP_SERVER,
+            TunnelType.STCP_VISITOR,
             tunnel_name,
             secret_key=secret_key,
-            local_addr=local_addr,
-            local_port=local_port,
-            data_callback=on_data_received,
+            remote_name=server_name,
+            bind_addr=bind_addr,
+            bind_port=bind_port,
             connection_callback=on_connection_changed
         )
         
@@ -73,10 +79,10 @@ def main():
         client.connect()
         
         # Start the tunnel
-        print("Starting STCP server tunnel...")
+        print("Starting STCP visitor tunnel...")
         tunnel.start()
         
-        print("STCP server is running. Waiting for connections...")
+        print(f"Visitor is running. You can now connect to {bind_addr}:{bind_port}")
         
         # Keep the program running and show stats periodically
         while True:

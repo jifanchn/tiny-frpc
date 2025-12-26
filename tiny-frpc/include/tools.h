@@ -35,6 +35,12 @@ uint16_t tools_ntohs(uint16_t netshort);
 uint64_t tools_get_time_ms(void);
 
 /**
+ * @brief Sleep for the specified number of milliseconds
+ * Platform-specific implementation may be required.
+ */
+void tools_sleep_ms(uint32_t ms);
+
+/**
  * @brief Initialize the tools module.
  * Used to initialize internal state if needed.
  */

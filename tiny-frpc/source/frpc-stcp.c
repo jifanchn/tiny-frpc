@@ -1,5 +1,7 @@
 #include "../include/frpc-stcp.h"
+#include "../include/frpc.h"
 #include "../include/tools.h"
+#include "wrapper.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -39,6 +41,9 @@ struct frpc_stcp_proxy {
     bool is_started;
     bool is_connected;
     bool is_registered;    // server role: whether it has been registered to frps
+    
+    // Visitor connection fd (new connection for NewVisitorConn)
+    int visitor_fd;
 };
 
 // Create an STCP proxy
@@ -60,6 +65,7 @@ frpc_stcp_proxy_t* frpc_stcp_proxy_new(frpc_client_t* client,
     proxy->config = *config;
     proxy->client = client;
     proxy->user_ctx = user_ctx;
+    proxy->visitor_fd = -1;  // Initialize as invalid
     
     // Duplicate string fields
     proxy->config.proxy_name = strdup(config->proxy_name);
@@ -317,12 +323,46 @@ static int on_write_wrapper(void* user_conn_ctx, const uint8_t* data, size_t len
     frpc_stcp_proxy_t* proxy = (frpc_stcp_proxy_t*)user_conn_ctx;
     if (!proxy) return -1;
     
-    // Invoke user-provided write callback.
+    // Invoke user-provided write callback first (if any).
     if (proxy->config.on_write) {
         return proxy->config.on_write(proxy->user_ctx, (uint8_t*)data, len);
     }
     
-    return len; // default: assume everything was written successfully
+    // For Visitor: use visitor_fd (new connection for NewVisitorConn)
+    // For Server: will use work_conn_fd (to be implemented)
+    int fd = proxy->visitor_fd;
+    if (fd < 0) {
+        // Fallback: no dedicated fd, cannot send
+        if (frpc_stcp_verbose_enabled()) {
+            fprintf(stderr, "on_write_wrapper: no valid fd for proxy '%s'\n", proxy->config.proxy_name);
+        }
+        return -1;
+    }
+    
+    // Send data via wrapper layer (portable)
+    size_t total_sent = 0;
+    while (total_sent < len) {
+        ssize_t sent = wrapped_write(fd, data + total_sent, len - total_sent);
+        if (sent < 0) {
+            int err = wrapped_get_errno();
+            if (err == WRAPPED_EINTR) {
+                continue;
+            }
+            if (frpc_stcp_verbose_enabled()) {
+                fprintf(stderr, "on_write_wrapper: write failed, errno=%d\n", err);
+            }
+            return -1;
+        }
+        if (sent == 0) {
+            if (frpc_stcp_verbose_enabled()) {
+                fprintf(stderr, "on_write_wrapper: connection closed\n");
+            }
+            return -1;
+        }
+        total_sent += (size_t)sent;
+    }
+    
+    return (int)total_sent;
 }
 
 // Initialize Yamux session
@@ -483,15 +523,24 @@ int frpc_stcp_visitor_connect(frpc_stcp_proxy_t* proxy) {
         return FRPC_SUCCESS;
     }
     
-    // 1) Ensure FRP client is connected
+    // 1) Ensure FRP client is connected (for run_id)
     int ret = frpc_client_connect(proxy->client);
     if (ret != FRPC_SUCCESS) {
         fprintf(stderr, "Error: Failed to connect FRP client to server\n");
         return ret;
     }
     
-    // 2) Build NewVisitorConn message
-    // In a full implementation, this should be serialized and sent via the FRP client connection.
+    // 2) Dial a NEW connection to frps for visitor
+    int visitor_fd = frpc_dial_server(proxy->client);
+    if (visitor_fd < 0) {
+        fprintf(stderr, "Error: Failed to dial new visitor connection\n");
+        return FRPC_ERROR_NETWORK;
+    }
+    proxy->visitor_fd = visitor_fd;
+    
+    fprintf(stdout, "Visitor dialed new connection to frps, fd=%d\n", visitor_fd);
+    
+    // 3) Build NewVisitorConn message
     time_t current_time;
     time(&current_time);
     int64_t timestamp = (int64_t)current_time;
@@ -499,25 +548,87 @@ int frpc_stcp_visitor_connect(frpc_stcp_proxy_t* proxy) {
     char sign_key[33] = {0};
     if (stcp_get_sign_key(proxy->config.sk, timestamp, sign_key) != 0) {
         fprintf(stderr, "Error: Failed to generate sign key\n");
+        wrapped_close(visitor_fd);
+        proxy->visitor_fd = -1;
         return FRPC_ERROR_INTERNAL;
     }
     
     fprintf(stdout, "Connecting to server '%s' with sign key: %s, timestamp: %lld\n", 
             proxy->config.server_name, sign_key, (long long)timestamp);
     
-    // TODO: build and send NewVisitorConn message
-    // {
-    //   "run_id": client run_id,
-    //   "proxy_name": proxy->config.proxy_name,
-    //   "sign_key": sign_key,
-    //   "timestamp": timestamp,
-    //   "use_encryption": proxy->use_encryption,
-    //   "use_compression": proxy->use_compression
-    // }
+    const char* run_id = frpc_client_get_run_id(proxy->client);
+    if (!run_id) {
+        run_id = "";
+    }
+    
+    char msg_json[1024];
+    int msg_len = snprintf(msg_json, sizeof(msg_json),
+        "{\"run_id\":\"%s\",\"proxy_name\":\"%s\",\"sign_key\":\"%s\","
+        "\"timestamp\":%lld,\"use_encryption\":%s,\"use_compression\":%s}",
+        run_id,
+        proxy->config.server_name ? proxy->config.server_name : proxy->config.proxy_name,
+        sign_key,
+        (long long)timestamp,
+        proxy->use_encryption ? "true" : "false",
+        proxy->use_compression ? "true" : "false");
+    
+    if (msg_len <= 0 || (size_t)msg_len >= sizeof(msg_json)) {
+        fprintf(stderr, "Error: NewVisitorConn message too long\n");
+        wrapped_close(visitor_fd);
+        proxy->visitor_fd = -1;
+        return FRPC_ERROR_INTERNAL;
+    }
+    
     fprintf(stdout, "Sending NewVisitorConn message for proxy: %s\n", proxy->config.proxy_name);
     
-    // 3) Verify response (handled by frpc_stcp_receive in a real implementation)
-    // TODO: currently simulated as success
+    // 4) Send NewVisitorConn on the new visitor connection (TypeNewVisitorConn = 'v')
+    ret = frpc_send_msg_on_fd(visitor_fd, (uint8_t)'v', msg_json, (size_t)msg_len);
+    if (ret != FRPC_SUCCESS) {
+        fprintf(stderr, "Error: Failed to send NewVisitorConn message\n");
+        wrapped_close(visitor_fd);
+        proxy->visitor_fd = -1;
+        return ret;
+    }
+    
+    // 5) Read NewVisitorConnResp (TypeNewVisitorConnResp = '3')
+    uint8_t resp_type = 0;
+    char* resp_json = NULL;
+    size_t resp_len = 0;
+    ret = frpc_read_msg_from_fd(visitor_fd, &resp_type, &resp_json, &resp_len, 10000);
+    if (ret != FRPC_SUCCESS) {
+        fprintf(stderr, "Error: Failed to read NewVisitorConnResp\n");
+        wrapped_close(visitor_fd);
+        proxy->visitor_fd = -1;
+        return ret;
+    }
+    
+    if (resp_type != (uint8_t)'3') {
+        fprintf(stderr, "Error: Unexpected response type %c, expected '3'\n", (char)resp_type);
+        free(resp_json);
+        wrapped_close(visitor_fd);
+        proxy->visitor_fd = -1;
+        return FRPC_ERROR_PROTO;
+    }
+    
+    // Check for error in response (simple JSON parsing)
+    // Look for "error":"xxx" pattern
+    if (resp_json && strstr(resp_json, "\"error\":\"") != NULL) {
+        char* err_start = strstr(resp_json, "\"error\":\"") + 9;
+        char* err_end = strchr(err_start, '"');
+        if (err_end && err_end > err_start) {
+            size_t err_len = (size_t)(err_end - err_start);
+            if (err_len > 0) {
+                fprintf(stderr, "Error: NewVisitorConnResp error: %.*s\n", (int)err_len, err_start);
+                free(resp_json);
+                wrapped_close(visitor_fd);
+                proxy->visitor_fd = -1;
+                return FRPC_ERROR_AUTH;
+            }
+        }
+    }
+    
+    fprintf(stdout, "NewVisitorConnResp received successfully\n");
+    free(resp_json);
     
     // 4) Initialize Yamux client session
     if (!proxy->yamux_session) {
@@ -620,24 +731,91 @@ int frpc_stcp_server_register(frpc_stcp_proxy_t* proxy) {
         return ret;
     }
     
-    // 2. Register STCP service with frps server, build NewProxy message
-    // In actual implementation, this should be serialized to JSON and sent via FRP client
-    // {
-    //   "proxy_name": proxy->config.proxy_name,
-    //   "proxy_type": "stcp",
-    //   "sk": proxy->config.sk,
-    //   "local_ip": proxy->config.local_addr,
-    //   "local_port": proxy->config.local_port,
-    //   "use_encryption": proxy->use_encryption,
-    //   "use_compression": proxy->use_compression
-    // }
     fprintf(stdout, "Registering STCP server '%s' for local service: %s:%d\n", 
             proxy->config.proxy_name, proxy->config.local_addr, proxy->config.local_port);
     
-    // 3. Wait for response (handled by frpc_stcp_receive when data is received)
-    // Here we simulate receiving a successful response
+    // 2. Build NewProxy message (TypeNewProxy = 'p')
+    // Format: {"proxy_name":"xxx","proxy_type":"stcp","sk":"xxx","allow_users":["*"]}
+    char allow_users_json[256] = "[\"*\"]";  // Default: allow all users
+    if (proxy->allow_users && proxy->allow_users_count > 0) {
+        // Build allow_users JSON array
+        size_t offset = 0;
+        allow_users_json[offset++] = '[';
+        for (size_t i = 0; i < proxy->allow_users_count && offset < sizeof(allow_users_json) - 10; i++) {
+            if (i > 0) {
+                allow_users_json[offset++] = ',';
+            }
+            int written = snprintf(allow_users_json + offset, sizeof(allow_users_json) - offset, 
+                                   "\"%s\"", proxy->allow_users[i] ? proxy->allow_users[i] : "*");
+            if (written > 0) {
+                offset += (size_t)written;
+            }
+        }
+        allow_users_json[offset++] = ']';
+        allow_users_json[offset] = '\0';
+    }
     
-    // 4. Initialize yamux server session
+    char new_proxy_json[1024];
+    int msg_len = snprintf(new_proxy_json, sizeof(new_proxy_json),
+        "{\"proxy_name\":\"%s\",\"proxy_type\":\"stcp\",\"sk\":\"%s\","
+        "\"use_encryption\":%s,\"use_compression\":%s,\"allow_users\":%s}",
+        proxy->config.proxy_name,
+        proxy->config.sk ? proxy->config.sk : "",
+        proxy->use_encryption ? "true" : "false",
+        proxy->use_compression ? "true" : "false",
+        allow_users_json);
+    
+    if (msg_len <= 0 || (size_t)msg_len >= sizeof(new_proxy_json)) {
+        fprintf(stderr, "Error: NewProxy message too long\n");
+        return FRPC_ERROR_INTERNAL;
+    }
+    
+    if (frpc_stcp_verbose_enabled()) {
+        fprintf(stdout, "Sending NewProxy message: %s\n", new_proxy_json);
+    }
+    
+    // 3. Send NewProxy message
+    ret = frpc_client_send_msg(proxy->client, (uint8_t)'p', new_proxy_json, (size_t)msg_len);
+    if (ret != FRPC_SUCCESS) {
+        fprintf(stderr, "Error: Failed to send NewProxy message\n");
+        return ret;
+    }
+    
+    // 4. Wait for NewProxyResp (TypeNewProxyResp = '2')
+    uint8_t resp_type = 0;
+    char* resp_json = NULL;
+    size_t resp_len = 0;
+    ret = frpc_client_read_msg(proxy->client, &resp_type, &resp_json, &resp_len, 10000);
+    if (ret != FRPC_SUCCESS) {
+        fprintf(stderr, "Error: Failed to read NewProxyResp\n");
+        return ret;
+    }
+    
+    if (resp_type != (uint8_t)'2') {
+        fprintf(stderr, "Error: Unexpected response type '%c', expected '2'\n", (char)resp_type);
+        free(resp_json);
+        return FRPC_ERROR_PROTO;
+    }
+    
+    // Check for error in response
+    if (resp_json && strstr(resp_json, "\"error\":\"") != NULL) {
+        char* err_start = strstr(resp_json, "\"error\":\"") + 9;
+        char* err_end = strchr(err_start, '"');
+        if (err_end && err_end > err_start) {
+            size_t err_len = (size_t)(err_end - err_start);
+            if (err_len > 0) {
+                fprintf(stderr, "Error: NewProxyResp error: %.*s\n", (int)err_len, err_start);
+                free(resp_json);
+                return FRPC_ERROR_AUTH;
+            }
+        }
+    }
+    
+    fprintf(stdout, "NewProxyResp received successfully for '%s'\n", proxy->config.proxy_name);
+    free(resp_json);
+    
+    // 5. Initialize yamux server session (for work connection handling)
+    // Note: The actual work connection will come later via ReqWorkConn
     if (!proxy->yamux_session) {
         proxy->yamux_session = init_yamux_session(proxy, false);
         if (!proxy->yamux_session) {

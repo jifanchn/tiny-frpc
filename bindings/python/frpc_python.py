@@ -462,13 +462,20 @@ class FRPCTunnel:
             if self.tunnel_name in self.client._tunnels:
                 del self.client._tunnels[self.tunnel_name]
 
+# Global reference to keep the log callback alive (prevent GC).
+_g_log_callback_ref = None
+
 # Convenience functions
 def set_log_callback(callback: Callable[[int, str], None]) -> None:
     """Set global log callback"""
+    global _g_log_callback_ref
+    
     def log_wrapper(level, message):
         callback(level, message.decode('utf-8'))
     
-    _lib.frpc_set_log_callback(LogCallback(log_wrapper))
+    # Keep a reference to prevent GC from collecting the callback
+    _g_log_callback_ref = LogCallback(log_wrapper)
+    _lib.frpc_set_log_callback(_g_log_callback_ref)
 
 def cleanup() -> None:
     """Cleanup FRPC library"""

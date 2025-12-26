@@ -174,6 +174,7 @@ TINY_FRPC_VERBOSE=1 make test   # Enable C-side diagnostics
 ## 📖 Documentation
 
 - [`tiny-frpc/FRP-STCP.md`](tiny-frpc/FRP-STCP.md) – STCP protocol notes
+- [`tiny-frpc/LOGIC.md`](tiny-frpc/LOGIC.md) – Architecture logic and flow
 - [`tiny-frpc/YAMUX.md`](tiny-frpc/YAMUX.md) – Yamux protocol notes
 - [`tiny-frpc/STAGE.md`](tiny-frpc/STAGE.md) – Project milestones
 - [`bindings/README.md`](bindings/README.md) – Language bindings guide

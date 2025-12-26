@@ -356,6 +356,218 @@ static int test_yamux_window_violation_and_unknown_frames(void) {
     return 0;
 }
 
+static int test_yamux_multiple_streams(void) {
+    printf("\n=== Testing yamux multiple streams ===\n");
+
+    yamux_test_ctx_t t;
+    memset(&t, 0, sizeof(t));
+
+    yamux_config_t client_cfg;
+    memset(&client_cfg, 0, sizeof(client_cfg));
+    client_cfg.enable_keepalive = false;
+    client_cfg.max_stream_window_size = 256 * 1024;
+    client_cfg.initial_stream_window_size = 1024;
+    client_cfg.max_streams = 16;
+    client_cfg.on_stream_established = client_on_stream_established;
+    client_cfg.write_fn = write_fn;
+    client_cfg.user_conn_ctx = &t.c2s;
+
+    yamux_config_t server_cfg;
+    memset(&server_cfg, 0, sizeof(server_cfg));
+    server_cfg.enable_keepalive = false;
+    server_cfg.max_stream_window_size = 256 * 1024;
+    server_cfg.initial_stream_window_size = 1024;
+    server_cfg.max_streams = 16;
+    server_cfg.on_new_stream = server_on_new_stream;
+    server_cfg.on_stream_data = server_on_stream_data;
+    server_cfg.on_stream_close = server_on_stream_close;
+    server_cfg.write_fn = write_fn;
+    server_cfg.user_conn_ctx = &t.s2c;
+
+    yamux_session_t* cs = yamux_session_new(&client_cfg, true, &t);
+    TEST_ASSERT(cs != NULL, "yamux_session_new(client) should succeed");
+    yamux_session_t* ss = yamux_session_new(&server_cfg, false, &t);
+    TEST_ASSERT(ss != NULL, "yamux_session_new(server) should succeed");
+
+    // Open multiple streams
+    uint32_t stream_ids[4];
+    for (int i = 0; i < 4; i++) {
+        void* stream_ud = &t;
+        stream_ids[i] = yamux_session_open_stream(cs, &stream_ud);
+        TEST_ASSERT(stream_ids[i] != 0, "open_stream should succeed");
+    }
+
+    // Deliver all SYN frames
+    TEST_ASSERT(flush_to_peer(ss, &t.c2s) >= 0, "server should receive SYNs");
+    TEST_ASSERT_EQ(4, t.server_new_stream_calls, "server should receive 4 new streams");
+
+    // Deliver ACKs
+    TEST_ASSERT(flush_to_peer(cs, &t.s2c) >= 0, "client should receive ACKs");
+    TEST_ASSERT(t.client_established_calls >= 4, "all streams should be established");
+
+    // Send data on each stream
+    for (int i = 0; i < 4; i++) {
+        char msg[32];
+        snprintf(msg, sizeof(msg), "stream%d_data", i);
+        int n = yamux_stream_write(cs, stream_ids[i], (const uint8_t*)msg, strlen(msg));
+        TEST_ASSERT(n > 0, "yamux_stream_write should succeed");
+    }
+
+    // Deliver data
+    TEST_ASSERT(flush_to_peer(ss, &t.c2s) >= 0, "server should receive data");
+    TEST_ASSERT(t.server_data_calls >= 4, "server should receive data on all streams");
+
+    // Close all streams
+    for (int i = 0; i < 4; i++) {
+        TEST_ASSERT_EQ(0, yamux_stream_close(cs, stream_ids[i], 0), "stream close should succeed");
+    }
+    (void)flush_to_peer(ss, &t.c2s);
+
+    yamux_session_free(cs);
+    yamux_session_free(ss);
+    free(t.c2s.data);
+    free(t.s2c.data);
+    return 0;
+}
+
+static int test_yamux_ping_pong(void) {
+    printf("\n=== Testing yamux ping/pong ===\n");
+
+    yamux_test_ctx_t t;
+    memset(&t, 0, sizeof(t));
+
+    yamux_config_t client_cfg;
+    memset(&client_cfg, 0, sizeof(client_cfg));
+    client_cfg.enable_keepalive = true;
+    client_cfg.keepalive_interval_ms = 5;
+    client_cfg.max_stream_window_size = 256 * 1024;
+    client_cfg.initial_stream_window_size = 64;
+    client_cfg.max_streams = 8;
+    client_cfg.write_fn = write_fn;
+    client_cfg.user_conn_ctx = &t.c2s;
+
+    yamux_config_t server_cfg;
+    memset(&server_cfg, 0, sizeof(server_cfg));
+    server_cfg.enable_keepalive = true;
+    server_cfg.keepalive_interval_ms = 5;
+    server_cfg.max_stream_window_size = 256 * 1024;
+    server_cfg.initial_stream_window_size = 64;
+    server_cfg.max_streams = 8;
+    server_cfg.write_fn = write_fn;
+    server_cfg.user_conn_ctx = &t.s2c;
+
+    yamux_session_t* cs = yamux_session_new(&client_cfg, true, &t);
+    TEST_ASSERT(cs != NULL, "yamux_session_new(client) should succeed");
+    yamux_session_t* ss = yamux_session_new(&server_cfg, false, &t);
+    TEST_ASSERT(ss != NULL, "yamux_session_new(server) should succeed");
+
+    // Trigger keepalive tick multiple times
+    for (int i = 0; i < 3; i++) {
+        usleep(10000); // 10ms
+        yamux_session_tick(cs);
+        (void)flush_to_peer(ss, &t.c2s);
+        yamux_session_tick(ss);
+        (void)flush_to_peer(cs, &t.s2c);
+    }
+
+    // Sessions should still be valid
+    TEST_ASSERT(yamux_session_is_closed(cs) == false, "client session should not be closed");
+    TEST_ASSERT(yamux_session_is_closed(ss) == false, "server session should not be closed");
+
+    yamux_session_free(cs);
+    yamux_session_free(ss);
+    free(t.c2s.data);
+    free(t.s2c.data);
+    return 0;
+}
+
+static int test_yamux_goaway(void) {
+    printf("\n=== Testing yamux GO_AWAY handling ===\n");
+
+    yamux_test_ctx_t t;
+    memset(&t, 0, sizeof(t));
+
+    yamux_config_t client_cfg;
+    memset(&client_cfg, 0, sizeof(client_cfg));
+    client_cfg.enable_keepalive = false;
+    client_cfg.max_stream_window_size = 256 * 1024;
+    client_cfg.initial_stream_window_size = 64;
+    client_cfg.max_streams = 8;
+    client_cfg.on_session_close = client_on_session_close;
+    client_cfg.write_fn = write_fn;
+    client_cfg.user_conn_ctx = &t.c2s;
+
+    yamux_config_t server_cfg;
+    memset(&server_cfg, 0, sizeof(server_cfg));
+    server_cfg.enable_keepalive = false;
+    server_cfg.max_stream_window_size = 256 * 1024;
+    server_cfg.initial_stream_window_size = 64;
+    server_cfg.max_streams = 8;
+    server_cfg.write_fn = write_fn;
+    server_cfg.user_conn_ctx = &t.s2c;
+
+    yamux_session_t* cs = yamux_session_new(&client_cfg, true, &t);
+    TEST_ASSERT(cs != NULL, "yamux_session_new(client) should succeed");
+    yamux_session_t* ss = yamux_session_new(&server_cfg, false, &t);
+    TEST_ASSERT(ss != NULL, "yamux_session_new(server) should succeed");
+
+    // Server sends GO_AWAY
+    TEST_ASSERT_EQ(0, yamux_session_close(ss), "server session close should succeed");
+    (void)flush_to_peer(cs, &t.s2c);
+
+    // Client should receive GO_AWAY and mark session as closed
+    TEST_ASSERT(t.client_session_close_calls >= 1, "client should receive session close callback");
+
+    // Trying to open new stream should fail
+    void* stream_ud = &t;
+    uint32_t sid = yamux_session_open_stream(cs, &stream_ud);
+    TEST_ASSERT(sid == 0, "open_stream on closed session should fail");
+
+    yamux_session_free(cs);
+    yamux_session_free(ss);
+    free(t.c2s.data);
+    free(t.s2c.data);
+    return 0;
+}
+
+static int test_yamux_null_callbacks(void) {
+    printf("\n=== Testing yamux with NULL callbacks ===\n");
+
+    wire_buf_t c2s = {0};
+    wire_buf_t s2c = {0};
+
+    yamux_config_t cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.enable_keepalive = false;
+    cfg.max_stream_window_size = 256 * 1024;
+    cfg.initial_stream_window_size = 64;
+    cfg.max_streams = 8;
+    // All callbacks NULL
+    cfg.write_fn = write_fn;
+    cfg.user_conn_ctx = &c2s;
+
+    yamux_session_t* cs = yamux_session_new(&cfg, true, NULL);
+    TEST_ASSERT(cs != NULL, "yamux_session_new with NULL callbacks should succeed");
+
+    cfg.user_conn_ctx = &s2c;
+    yamux_session_t* ss = yamux_session_new(&cfg, false, NULL);
+    TEST_ASSERT(ss != NULL, "server session with NULL callbacks should succeed");
+
+    // Open stream should work even without callbacks
+    void* stream_ud = NULL;
+    uint32_t sid = yamux_session_open_stream(cs, &stream_ud);
+    TEST_ASSERT(sid != 0, "open_stream should succeed with NULL callbacks");
+
+    (void)flush_to_peer(ss, &c2s);
+    (void)flush_to_peer(cs, &s2c);
+
+    yamux_session_free(cs);
+    yamux_session_free(ss);
+    free(c2s.data);
+    free(s2c.data);
+    return 0;
+}
+
 int main(void) {
     printf("Running yamux unit tests...\n");
     int failed = 0;
@@ -363,6 +575,10 @@ int main(void) {
     if (test_yamux_inmemory_basic() != 0) failed++;
     if (test_yamux_rst_and_free() != 0) failed++;
     if (test_yamux_window_violation_and_unknown_frames() != 0) failed++;
+    if (test_yamux_multiple_streams() != 0) failed++;
+    if (test_yamux_ping_pong() != 0) failed++;
+    if (test_yamux_goaway() != 0) failed++;
+    if (test_yamux_null_callbacks() != 0) failed++;
 
     printf("\n=== Test Results ===\n");
     if (failed == 0) {

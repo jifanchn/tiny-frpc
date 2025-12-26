@@ -1,6 +1,7 @@
 #ifndef TINY_FRPC_WRAPPER_H
 #define TINY_FRPC_WRAPPER_H
 
+#include <stdint.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -35,6 +36,8 @@ int wrapped_select(int nfds, fd_set *readfds, fd_set *writefds,
 
 // Time operations
 time_t wrapped_time(time_t *tloc);
+void wrapped_usleep(unsigned int usec);
+uint64_t wrapped_get_time_ms(void);
 
 // Character classification
 int wrapped_isspace(int c);

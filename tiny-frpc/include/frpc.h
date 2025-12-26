@@ -61,4 +61,31 @@ void frpc_client_set_event_callback(frpc_client_t* client, frpc_event_callback c
 // These bytes are sent to the frps connection, frps routes them to the work conn peer
 int frpc_client_send_yamux_frame_bytes(frpc_client_t* client, const uint8_t* data, size_t len);
 
+// Send FRP protocol message (type byte + 8-byte length + JSON body)
+// Returns 0 on success, negative error code on failure
+int frpc_client_send_msg(frpc_client_t* client, uint8_t type, const char* json, size_t json_len);
+
+// Read FRP protocol message (type byte + 8-byte length + JSON body)
+// Caller must free *json_out after use
+// Returns 0 on success, negative error code on failure
+int frpc_client_read_msg(frpc_client_t* client, uint8_t* type_out, char** json_out, size_t* json_len_out, int timeout_ms);
+
+// Get client run_id (assigned by frps after login)
+const char* frpc_client_get_run_id(frpc_client_t* client);
+
+// Get server address and port from client config
+const char* frpc_client_get_server_addr(frpc_client_t* client);
+uint16_t frpc_client_get_server_port(frpc_client_t* client);
+
+// Dial a new TCP connection to the FRP server (for visitor/work connections)
+// Returns file descriptor on success, negative error code on failure
+int frpc_dial_server(frpc_client_t* client);
+
+// Send FRP message on a specific file descriptor (for visitor connections)
+int frpc_send_msg_on_fd(int fd, uint8_t type, const char* json, size_t json_len);
+
+// Read FRP message from a specific file descriptor (for visitor connections)
+// Caller must free *json_out after use
+int frpc_read_msg_from_fd(int fd, uint8_t* type_out, char** json_out, size_t* json_len_out, int timeout_ms);
+
 #endif // FRPC_H 

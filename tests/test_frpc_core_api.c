@@ -217,11 +217,121 @@ static int test_frpc_core_api(void) {
     return 0;
 }
 
+static int test_frpc_dial_server_errors(void) {
+    printf("\n=== Testing frpc_dial_server error paths ===\n");
+
+    // NULL client
+    int fd = frpc_dial_server(NULL);
+    TEST_ASSERT(fd < 0, "frpc_dial_server(NULL) should fail");
+
+    // Client not connected
+    frpc_config_t cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.server_addr = "127.0.0.1";
+    cfg.server_port = 65534; // unlikely to be listening
+    cfg.token = "test";
+    cfg.heartbeat_interval = 0;
+    cfg.tls_enable = false;
+
+    frpc_client_t* c = frpc_client_new(&cfg, NULL);
+    TEST_ASSERT(c != NULL, "frpc_client_new should succeed");
+
+    // dial without connect - should still attempt dial (may fail but not crash)
+    fd = frpc_dial_server(c);
+    // Result depends on whether port is reachable; just verify no crash
+    printf("PASS: frpc_dial_server on non-connected client returns %d (no crash)\n", fd);
+    if (fd >= 0) close(fd);
+
+    frpc_client_free(c);
+    return 0;
+}
+
+static int test_frpc_send_msg_on_fd_errors(void) {
+    printf("\n=== Testing frpc_send_msg_on_fd error paths ===\n");
+
+    // Invalid fd
+    int ret = frpc_send_msg_on_fd(-1, 'p', "{}", 2);
+    TEST_ASSERT(ret < 0, "frpc_send_msg_on_fd(-1) should fail");
+
+    // NULL json
+    ret = frpc_send_msg_on_fd(1, 'p', NULL, 0);
+    TEST_ASSERT(ret < 0, "frpc_send_msg_on_fd(NULL json) should fail");
+
+    return 0;
+}
+
+static int test_frpc_read_msg_from_fd_errors(void) {
+    printf("\n=== Testing frpc_read_msg_from_fd error paths ===\n");
+
+    uint8_t type_out;
+    char* json_out = NULL;
+    size_t json_len_out;
+
+    // Invalid fd
+    int ret = frpc_read_msg_from_fd(-1, &type_out, &json_out, &json_len_out, 100);
+    TEST_ASSERT(ret < 0, "frpc_read_msg_from_fd(-1) should fail");
+
+    // NULL pointers
+    ret = frpc_read_msg_from_fd(1, NULL, &json_out, &json_len_out, 100);
+    TEST_ASSERT(ret < 0, "frpc_read_msg_from_fd(NULL type) should fail");
+
+    ret = frpc_read_msg_from_fd(1, &type_out, NULL, &json_len_out, 100);
+    TEST_ASSERT(ret < 0, "frpc_read_msg_from_fd(NULL json) should fail");
+
+    return 0;
+}
+
+static int test_frpc_client_accessors(void) {
+    printf("\n=== Testing frpc_client accessor functions ===\n");
+
+    mock_frps_t frps;
+    TEST_ASSERT_EQ(0, mock_frps_start(&frps), "mock frps should start");
+
+    frpc_config_t cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.server_addr = "127.0.0.1";
+    cfg.server_port = frps.port;
+    cfg.token = "test_token";
+    cfg.heartbeat_interval = 1;
+    cfg.tls_enable = false;
+
+    frpc_client_t* c = frpc_client_new(&cfg, NULL);
+    TEST_ASSERT(c != NULL, "frpc_client_new should succeed");
+
+    // Test accessors before connect
+    const char* addr = frpc_client_get_server_addr(c);
+    TEST_ASSERT(addr != NULL && strcmp(addr, "127.0.0.1") == 0, "get_server_addr should return correct address");
+
+    uint16_t port = frpc_client_get_server_port(c);
+    TEST_ASSERT_EQ(frps.port, port, "get_server_port should return correct port");
+
+    // run_id should be NULL before connect
+    const char* run_id = frpc_client_get_run_id(c);
+    TEST_ASSERT(run_id == NULL || strlen(run_id) == 0, "run_id should be empty before connect");
+
+    // Connect
+    TEST_ASSERT_EQ(0, frpc_client_connect(c), "frpc_client_connect should succeed");
+    mock_frps_join(&frps);
+
+    // run_id should be set after connect
+    run_id = frpc_client_get_run_id(c);
+    TEST_ASSERT(run_id != NULL && strlen(run_id) > 0, "run_id should be set after connect");
+    printf("PASS: run_id after connect: %s\n", run_id);
+
+    frpc_client_disconnect(c);
+    frpc_client_free(c);
+    return 0;
+}
+
 int main(void) {
     printf("Running frpc core API tests...\n");
     int failed = 0;
 
     if (test_frpc_core_api() != 0) failed++;
+    if (test_frpc_dial_server_errors() != 0) failed++;
+    if (test_frpc_send_msg_on_fd_errors() != 0) failed++;
+    if (test_frpc_read_msg_from_fd_errors() != 0) failed++;
+    if (test_frpc_client_accessors() != 0) failed++;
 
     printf("\n=== Test Results ===\n");
     if (failed == 0) {

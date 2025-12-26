@@ -96,6 +96,7 @@ BINDINGS_SHLIB := $(BINDINGS_SHLIB_DIR)/libfrpc-bindings.so
 BINDINGS_SHLIB_DIR_STAMP := $(BINDINGS_SHLIB_DIR)/.dir
 
 TOOLS_PIC_OBJ := $(BINDINGS_SHLIB_DIR)/tools.pic.o
+CRYPTO_PIC_OBJ := $(BINDINGS_SHLIB_DIR)/crypto.pic.o
 YAMUX_PIC_OBJ := $(BINDINGS_SHLIB_DIR)/yamux.pic.o
 FRPC_PIC_OBJ := $(BINDINGS_SHLIB_DIR)/frpc.pic.o
 FRPC_STCP_PIC_OBJ := $(BINDINGS_SHLIB_DIR)/frpc-stcp.pic.o
@@ -104,6 +105,7 @@ BINDINGS_PIC_OBJ := $(BINDINGS_SHLIB_DIR)/frpc-bindings.pic.o
 
 # Output files
 TOOLS_OBJ := $(BUILD_DIR)/tools.o
+CRYPTO_OBJ := $(BUILD_DIR)/crypto.o
 YAMUX_OBJ := $(BUILD_DIR)/yamux.o
 FRPC_OBJ := $(BUILD_DIR)/frpc.o
 FRPC_STCP_OBJ := $(BUILD_DIR)/frpc-stcp.o
@@ -111,6 +113,7 @@ WRAPPER_OBJ := $(BUILD_DIR)/wrapper.o
 BINDINGS_OBJ := $(BUILD_DIR)/frpc-bindings.o
 
 TOOLS_LIB := $(BUILD_DIR)/libtools.a
+CRYPTO_LIB := $(BUILD_DIR)/libcrypto.a
 YAMUX_LIB := $(BUILD_DIR)/libyamux.a
 FRPC_LIB := $(BUILD_DIR)/libfrpc.a
 WRAPPER_LIB := $(BUILD_DIR)/libwrapper.a
@@ -139,10 +142,13 @@ help:
 	@echo ""
 	@echo "Tip: legacy target names still exist (e.g. bindings-test, python-bindings-test, demo-stcp-run)."
 
-all: $(TOOLS_LIB) $(YAMUX_LIB) $(FRPC_LIB) $(WRAPPER_LIB) $(BINDINGS_LIB)
+all: $(TOOLS_LIB) $(CRYPTO_LIB) $(YAMUX_LIB) $(FRPC_LIB) $(WRAPPER_LIB) $(BINDINGS_LIB)
 
 # ---- build: objects ----
 $(TOOLS_OBJ): $(SOURCE_DIR)/tools.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(CRYPTO_OBJ): $(SOURCE_DIR)/crypto.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(YAMUX_OBJ): $(SOURCE_DIR)/yamux.c | $(BUILD_DIR)
@@ -162,6 +168,9 @@ $(BINDINGS_OBJ): $(SOURCE_DIR)/frpc-bindings.c | $(BUILD_DIR)
 
 # ---- build: libraries ----
 $(TOOLS_LIB): $(TOOLS_OBJ)
+	ar rcs $@ $^
+
+$(CRYPTO_LIB): $(CRYPTO_OBJ)
 	ar rcs $@ $^
 
 $(YAMUX_LIB): $(YAMUX_OBJ)
@@ -191,6 +200,9 @@ $(BINDINGS_SHLIB_DIR_STAMP):
 $(TOOLS_PIC_OBJ): $(SOURCE_DIR)/tools.c | $(BINDINGS_SHLIB_DIR_STAMP)
 	$(CC) $(CFLAGS) $(PIC_CFLAGS) -c $< -o $@
 
+$(CRYPTO_PIC_OBJ): $(SOURCE_DIR)/crypto.c | $(BINDINGS_SHLIB_DIR_STAMP)
+	$(CC) $(CFLAGS) $(PIC_CFLAGS) -c $< -o $@
+
 $(YAMUX_PIC_OBJ): $(SOURCE_DIR)/yamux.c | $(BINDINGS_SHLIB_DIR_STAMP)
 	$(CC) $(CFLAGS) $(PIC_CFLAGS) -c $< -o $@
 
@@ -206,16 +218,16 @@ $(WRAPPER_PIC_OBJ): $(WRAPPER_DIR)/wrapper.c | $(BINDINGS_SHLIB_DIR_STAMP)
 $(BINDINGS_PIC_OBJ): $(SOURCE_DIR)/frpc-bindings.c | $(BINDINGS_SHLIB_DIR_STAMP)
 	$(CC) $(CFLAGS) $(PIC_CFLAGS) -c $< -o $@
 
-$(BINDINGS_SHLIB): $(TOOLS_PIC_OBJ) $(YAMUX_PIC_OBJ) $(FRPC_PIC_OBJ) $(FRPC_STCP_PIC_OBJ) $(WRAPPER_PIC_OBJ) $(BINDINGS_PIC_OBJ)
-	$(CC) $(SHLIB_LDFLAGS) $(SHLIB_ID_LDFLAGS) -o $@ $^ -pthread
+$(BINDINGS_SHLIB): $(TOOLS_PIC_OBJ) $(CRYPTO_PIC_OBJ) $(YAMUX_PIC_OBJ) $(FRPC_PIC_OBJ) $(FRPC_STCP_PIC_OBJ) $(WRAPPER_PIC_OBJ) $(BINDINGS_PIC_OBJ)
+	$(CC) $(SHLIB_LDFLAGS) $(SHLIB_ID_LDFLAGS) -o $@ $^ -pthread $(LDFLAGS)
 
 bindings-shared: $(BINDINGS_SHLIB)
 
 # ------------------------
 # C tests (pure C, based on wrapper/linux)
 # ------------------------
-$(BUILD_DIR)/test_tools: tests/test_tools.c $(TOOLS_LIB) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -o $@ $< $(TOOLS_LIB) $(LDFLAGS)
+$(BUILD_DIR)/test_tools: tests/test_tools.c $(TOOLS_LIB) $(WRAPPER_LIB) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -o $@ $< $(TOOLS_LIB) $(WRAPPER_LIB) $(LDFLAGS)
 
 tools-test: $(BUILD_DIR)/test_tools
 	$(RUN_ENV) $(BUILD_DIR)/test_tools
@@ -226,43 +238,49 @@ $(BUILD_DIR)/test_wrapper: tests/test_wrapper.c $(WRAPPER_LIB) | $(BUILD_DIR)
 wrapper-test: $(BUILD_DIR)/test_wrapper
 	$(RUN_ENV) $(BUILD_DIR)/test_wrapper
 
-$(BUILD_DIR)/test_tunnel_config: tests/test_tunnel_config.c $(BINDINGS_LIB) $(FRPC_LIB) $(TOOLS_LIB) $(YAMUX_LIB) $(WRAPPER_LIB) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -o $@ $< $(BINDINGS_LIB) $(FRPC_LIB) $(TOOLS_LIB) $(YAMUX_LIB) $(WRAPPER_LIB) -pthread $(LDFLAGS)
+$(BUILD_DIR)/test_tunnel_config: tests/test_tunnel_config.c $(BINDINGS_LIB) $(FRPC_LIB) $(CRYPTO_LIB) $(TOOLS_LIB) $(YAMUX_LIB) $(WRAPPER_LIB) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -o $@ $< $(BINDINGS_LIB) $(FRPC_LIB) $(CRYPTO_LIB) $(TOOLS_LIB) $(YAMUX_LIB) $(WRAPPER_LIB) -pthread $(LDFLAGS)
 
 config-test: $(BUILD_DIR)/test_tunnel_config
 	$(RUN_ENV) $(BUILD_DIR)/test_tunnel_config
 
-$(BUILD_DIR)/test_error_handling: tests/test_error_handling.c $(BINDINGS_LIB) $(FRPC_LIB) $(TOOLS_LIB) $(YAMUX_LIB) $(WRAPPER_LIB) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -o $@ $< $(BINDINGS_LIB) $(FRPC_LIB) $(TOOLS_LIB) $(YAMUX_LIB) $(WRAPPER_LIB) -pthread $(LDFLAGS)
+$(BUILD_DIR)/test_error_handling: tests/test_error_handling.c $(BINDINGS_LIB) $(FRPC_LIB) $(CRYPTO_LIB) $(TOOLS_LIB) $(YAMUX_LIB) $(WRAPPER_LIB) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -o $@ $< $(BINDINGS_LIB) $(FRPC_LIB) $(CRYPTO_LIB) $(TOOLS_LIB) $(YAMUX_LIB) $(WRAPPER_LIB) -pthread $(LDFLAGS)
 
 error-test: $(BUILD_DIR)/test_error_handling
 	$(RUN_ENV) $(BUILD_DIR)/test_error_handling
 
-$(BUILD_DIR)/test_frpc_bindings_api: tests/test_frpc_bindings_api.c $(BINDINGS_LIB) $(FRPC_LIB) $(TOOLS_LIB) $(YAMUX_LIB) $(WRAPPER_LIB) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -o $@ $< $(BINDINGS_LIB) $(FRPC_LIB) $(TOOLS_LIB) $(YAMUX_LIB) $(WRAPPER_LIB) -pthread $(LDFLAGS)
+$(BUILD_DIR)/test_frpc_bindings_api: tests/test_frpc_bindings_api.c $(BINDINGS_LIB) $(FRPC_LIB) $(CRYPTO_LIB) $(TOOLS_LIB) $(YAMUX_LIB) $(WRAPPER_LIB) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -o $@ $< $(BINDINGS_LIB) $(FRPC_LIB) $(CRYPTO_LIB) $(TOOLS_LIB) $(YAMUX_LIB) $(WRAPPER_LIB) -pthread $(LDFLAGS)
 
 bindings-api-test: $(BUILD_DIR)/test_frpc_bindings_api
 	$(RUN_ENV) $(BUILD_DIR)/test_frpc_bindings_api
 
-$(BUILD_DIR)/test_yamux_unit: tests/test_yamux_unit.c $(YAMUX_LIB) $(TOOLS_LIB) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -o $@ $< $(YAMUX_LIB) $(TOOLS_LIB) $(LDFLAGS)
+$(BUILD_DIR)/test_yamux_unit: tests/test_yamux_unit.c $(YAMUX_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -o $@ $< $(YAMUX_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) $(LDFLAGS)
 
 yamux-unit-test: $(BUILD_DIR)/test_yamux_unit
 	$(RUN_ENV) $(BUILD_DIR)/test_yamux_unit
 
-$(BUILD_DIR)/test_frpc_stcp_unit: tests/test_frpc_stcp_unit.c $(FRPC_LIB) $(YAMUX_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -o $@ $< $(FRPC_LIB) $(YAMUX_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) -pthread $(LDFLAGS)
+$(BUILD_DIR)/test_frpc_stcp_unit: tests/test_frpc_stcp_unit.c $(FRPC_LIB) $(CRYPTO_LIB) $(YAMUX_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -o $@ $< $(FRPC_LIB) $(CRYPTO_LIB) $(YAMUX_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) -pthread $(LDFLAGS)
 
 stcp-unit-test: $(BUILD_DIR)/test_frpc_stcp_unit
 	$(RUN_ENV) $(BUILD_DIR)/test_frpc_stcp_unit
 
-$(BUILD_DIR)/test_frpc_core_api: tests/test_frpc_core_api.c $(FRPC_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -o $@ $< $(FRPC_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) -pthread $(LDFLAGS)
+$(BUILD_DIR)/test_frpc_core_api: tests/test_frpc_core_api.c $(FRPC_LIB) $(CRYPTO_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -o $@ $< $(FRPC_LIB) $(CRYPTO_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) -pthread $(LDFLAGS)
 
 frpc-core-test: $(BUILD_DIR)/test_frpc_core_api
 	$(RUN_ENV) $(BUILD_DIR)/test_frpc_core_api
 
-c-test: all tools-test wrapper-test yamux-unit-test config-test error-test bindings-api-test stcp-unit-test frpc-core-test
+$(BUILD_DIR)/test_crypto: tests/test_crypto.c $(CRYPTO_LIB) $(WRAPPER_LIB) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -o $@ $< $(CRYPTO_LIB) $(WRAPPER_LIB) -pthread $(LDFLAGS)
+
+crypto-test: $(BUILD_DIR)/test_crypto
+	$(RUN_ENV) $(BUILD_DIR)/test_crypto
+
+c-test: all tools-test wrapper-test yamux-unit-test config-test error-test bindings-api-test stcp-unit-test frpc-core-test crypto-test
 
 # ------------------------
 # cmd/ tests (CGO: Go <-> C alignment)
@@ -281,35 +299,50 @@ frpc-test: all
 	$(GO) build -a -o $(BUILD_DIR)/frpc_test ./cmd/frpc_test
 	$(RUN_ENV) $(BUILD_DIR)/frpc_test $(RUN_ARGS)
 
+frpc-multi-channel-test: all
+	$(GO) clean -cache
+	$(GO) build -tags "multi_channel" -a -o $(BUILD_DIR)/frpc_multi_channel_test \
+		cmd/frpc_test/multi_channel_test.go cmd/frpc_test/coverage_flush_stub.go
+	$(RUN_ENV) $(BUILD_DIR)/frpc_multi_channel_test
+
 cmd-test: yamux-test frpc-test
 
 # Unified target: `make test`
 test: c-test cmd-test
 
 # ------------------------
-# Language bindings smoke tests
+# FRPS build (for E2E tests with real frps)
 # ------------------------
-python-bindings-test: bindings-shared
-	cd bindings/python && python3 -B test_smoke.py
+FRPS_BIN := $(BUILD_DIR)/frps
 
-nodejs-bindings-test: bindings-shared
+$(FRPS_BIN): | $(BUILD_DIR)
+	cd third-party/frp && $(GO) build -o ../../$(FRPS_BIN) ./cmd/frps
+
+frps-build: $(FRPS_BIN)
+
+# ------------------------
+# E2E tests (with mock FRPS - demo_stcp_frps)
+# ------------------------
+python-e2e-test: bindings-shared demo-stcp
+	cd bindings/python && python3 -B test_e2e.py --frps-path ../../$(DEMO_STCP_FRPS_BIN)
+
+nodejs-e2e-test: bindings-shared demo-stcp
 	cd bindings/nodejs && $(NODE_GYP_RUN) rebuild
 	@mkdir -p bindings/nodejs/build
 	@cp -f $(BINDINGS_SHLIB) bindings/nodejs/build/libfrpc-bindings.so
-	cd bindings/nodejs && node test_smoke.js
+	cd bindings/nodejs && node test_e2e.js --frps-path ../../$(DEMO_STCP_FRPS_BIN)
 
 rust-bindings-test: bindings-shared
 	cd bindings/rust && cargo test --quiet
 
-bindings-test: python-bindings-test nodejs-bindings-test rust-bindings-test
+e2e-test: python-e2e-test nodejs-e2e-test
+bindings-test: e2e-test rust-bindings-test
 
 # ------------------------
 # High-level shortcuts (for a simpler UX)
 # ------------------------
 test-bindings: bindings-test
-python: python-bindings-test
-nodejs: nodejs-bindings-test
-rust: rust-bindings-test
+e2e: e2e-test
 demo: demo-stcp-run
 
 # ------------------------
@@ -334,11 +367,11 @@ $(DEMO_STCP_COMMON_OBJ): $(DEMO_STCP_DIR)/common.c $(DEMO_STCP_DIR)/common.h | $
 $(DEMO_STCP_FRPS_BIN): $(DEMO_STCP_DIR)/mock_frps.c $(DEMO_STCP_COMMON_OBJ) $(WRAPPER_LIB) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(DEMO_STCP_CFLAGS) -o $@ $(DEMO_STCP_DIR)/mock_frps.c $(DEMO_STCP_COMMON_OBJ) $(WRAPPER_LIB) -pthread $(LDFLAGS)
 
-$(DEMO_STCP_SERVER_BIN): $(DEMO_STCP_DIR)/stcp_server.c $(DEMO_STCP_COMMON_OBJ) $(FRPC_LIB) $(YAMUX_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) $(DEMO_STCP_CFLAGS) -o $@ $(DEMO_STCP_DIR)/stcp_server.c $(DEMO_STCP_COMMON_OBJ) $(FRPC_LIB) $(YAMUX_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) -pthread $(LDFLAGS)
+$(DEMO_STCP_SERVER_BIN): $(DEMO_STCP_DIR)/stcp_server.c $(DEMO_STCP_COMMON_OBJ) $(FRPC_LIB) $(CRYPTO_LIB) $(YAMUX_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(DEMO_STCP_CFLAGS) -o $@ $(DEMO_STCP_DIR)/stcp_server.c $(DEMO_STCP_COMMON_OBJ) $(FRPC_LIB) $(CRYPTO_LIB) $(YAMUX_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) -pthread $(LDFLAGS)
 
-$(DEMO_STCP_VISITOR_BIN): $(DEMO_STCP_DIR)/stcp_visitor.c $(DEMO_STCP_COMMON_OBJ) $(FRPC_LIB) $(YAMUX_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) $(DEMO_STCP_CFLAGS) -o $@ $(DEMO_STCP_DIR)/stcp_visitor.c $(DEMO_STCP_COMMON_OBJ) $(FRPC_LIB) $(YAMUX_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) -pthread $(LDFLAGS)
+$(DEMO_STCP_VISITOR_BIN): $(DEMO_STCP_DIR)/stcp_visitor.c $(DEMO_STCP_COMMON_OBJ) $(FRPC_LIB) $(CRYPTO_LIB) $(YAMUX_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(DEMO_STCP_CFLAGS) -o $@ $(DEMO_STCP_DIR)/stcp_visitor.c $(DEMO_STCP_COMMON_OBJ) $(FRPC_LIB) $(CRYPTO_LIB) $(YAMUX_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) -pthread $(LDFLAGS)
 
 $(DEMO_STCP_LOCAL_CLIENT_BIN): $(DEMO_STCP_DIR)/local_client.c $(DEMO_STCP_COMMON_OBJ) $(WRAPPER_LIB) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(DEMO_STCP_CFLAGS) -o $@ $(DEMO_STCP_DIR)/local_client.c $(DEMO_STCP_COMMON_OBJ) $(WRAPPER_LIB) -pthread $(LDFLAGS)
@@ -401,9 +434,9 @@ coverage: clean
 	@echo "Coverage OK (>=80%). Report: $(BUILD_DIR_COV)/coverage.info"
 
 .PHONY: all install clean test c-test cmd-test \
-	tools-test wrapper-test config-test error-test bindings-api-test yamux-unit-test stcp-unit-test frpc-core-test \
+	tools-test wrapper-test config-test error-test bindings-api-test yamux-unit-test stcp-unit-test frpc-core-test crypto-test \
 	yamux-test frpc-test cmd-coverage coverage \
-	bindings-shared python-bindings-test nodejs-bindings-test rust-bindings-test bindings-test test-bindings \
-	python nodejs rust \
+	bindings-shared rust-bindings-test bindings-test test-bindings \
+	frps-build python-e2e-test nodejs-e2e-test e2e-test e2e \
 	demo-stcp demo-stcp-run demo \
 	help

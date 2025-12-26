@@ -1,5 +1,6 @@
 #include "../include/frpc.h"
 #include "../include/tools.h"
+#include "../include/crypto.h"
 #include "wrapper.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -140,8 +141,18 @@ static int frpc_read_msg_fd(int fd, uint8_t* type_out, char** json_out, size_t* 
 
     uint8_t type = 0;
     uint8_t len_be[8];
-    if (frpc_read_exact_timeout(fd, &type, 1, timeout_ms) != 0) return -1;
-    if (frpc_read_exact_timeout(fd, len_be, sizeof(len_be), timeout_ms) != 0) return -1;
+    if (frpc_read_exact_timeout(fd, &type, 1, timeout_ms) != 0) {
+        if (frpc_verbose_enabled()) {
+            fprintf(stderr, "frpc_read_msg_fd: failed to read type byte, errno=%d\n", wrapped_get_errno());
+        }
+        return -1;
+    }
+    if (frpc_read_exact_timeout(fd, len_be, sizeof(len_be), timeout_ms) != 0) {
+        if (frpc_verbose_enabled()) {
+            fprintf(stderr, "frpc_read_msg_fd: failed to read length, errno=%d\n", wrapped_get_errno());
+        }
+        return -1;
+    }
 
     int64_t msg_len = frpc_read_be64(len_be);
     if (msg_len < 0 || msg_len > FRPC_MAX_MSG_LENGTH) {
@@ -256,6 +267,9 @@ struct frpc_client {
     size_t recv_buffer_size;
     size_t recv_buffer_len;
     char* run_id; // run_id allocated by frps (received after successful login)
+    
+    // Crypto stream for encrypted messages (after login)
+    frp_crypto_stream_t* crypto_stream;
     
     // State flags
     bool is_connected;
@@ -442,6 +456,22 @@ int frpc_client_connect(frpc_client_t* client) {
     client->recv_buffer_len = 0;
     client->last_heartbeat_time = tools_get_time_ms();
 
+    // Initialize crypto stream for encrypted messages after login
+    if (client->config.token && client->config.token[0] != '\0') {
+        if (client->crypto_stream) {
+            frp_crypto_stream_free(client->crypto_stream);
+        }
+        client->crypto_stream = frp_crypto_stream_new(client->config.token);
+        if (!client->crypto_stream) {
+            fprintf(stderr, "frpc_client_connect: failed to create crypto stream\n");
+            ret = FRPC_ERROR_INTERNAL;
+            goto out_login_resp;
+        }
+        if (frpc_verbose_enabled()) {
+            fprintf(stdout, "frpc_client_connect: crypto stream initialized\n");
+        }
+    }
+
     // Notify connection event
     if (client->event_callback) {
         client->event_callback(client->user_ctx, 1, NULL); // 1 = connected
@@ -465,9 +495,19 @@ int frpc_client_disconnect(frpc_client_t* client) {
         return FRPC_SUCCESS;
     }
     
-    // For tests we only update state.
-    // A real implementation should close the socket.
     fprintf(stdout, "Disconnecting from FRP server\n");
+    
+    // Free crypto stream
+    if (client->crypto_stream) {
+        frp_crypto_stream_free(client->crypto_stream);
+        client->crypto_stream = NULL;
+    }
+    
+    // Close socket
+    if (client->socket_fd >= 0) {
+        wrapped_close(client->socket_fd);
+        client->socket_fd = -1;
+    }
     
     client->is_connected = false;
     
@@ -546,22 +586,282 @@ int frpc_client_send_yamux_frame_bytes(frpc_client_t* client, const uint8_t* dat
         if (frpc_verbose_enabled()) {
             fprintf(stderr, "frpc_client_send_yamux_frame_bytes: Client not connected\n");
         }
-        return FRPC_ERROR_NETWORK; // Or a more specific error like NOT_CONNECTED
+        return FRPC_ERROR_NETWORK;
     }
 
-    // TODO: Implement actual sending of these bytes over client->socket_fd
-    // This should be a raw TCP send. frps will interpret these bytes as Yamux frames
-    // arriving on the work connection associated with this client for this STCP proxy.
-    
+    if (client->socket_fd < 0) {
+        if (frpc_verbose_enabled()) {
+            fprintf(stderr, "frpc_client_send_yamux_frame_bytes: Invalid socket fd\n");
+        }
+        return FRPC_ERROR_NETWORK;
+    }
+
     if (frpc_verbose_enabled()) {
-        fprintf(stdout, "FRPC_CLIENT_SEND_YAMUX_BYTES: Client %p, len %zu. Data (first 16 bytes hex): ", (void*)client, len);
+        fprintf(stdout, "FRPC_CLIENT_SEND_YAMUX_BYTES: Client %p, len %zu, fd %d. Data (first 16 bytes hex): ", 
+                (void*)client, len, client->socket_fd);
         for (size_t i = 0; i < len && i < 16; ++i) {
             fprintf(stdout, "%02x ", data[i]);
         }
         fprintf(stdout, "\n");
-        fflush(stdout); // Ensure log is visible immediately
+        fflush(stdout);
     }
 
-    // For now, pretend success. In a real implementation, this would be the return value of send().
-    return (int)len; 
-} 
+    // Send data via wrapper layer (portable)
+    size_t total_sent = 0;
+    while (total_sent < len) {
+        ssize_t sent = wrapped_write(client->socket_fd, data + total_sent, len - total_sent);
+        if (sent < 0) {
+            int err = wrapped_get_errno();
+            if (err == WRAPPED_EINTR) {
+                continue; // Retry on interrupt
+            }
+            if (frpc_verbose_enabled()) {
+                fprintf(stderr, "frpc_client_send_yamux_frame_bytes: write failed, errno=%d\n", err);
+            }
+            return FRPC_ERROR_NETWORK;
+        }
+        if (sent == 0) {
+            // Connection closed
+            if (frpc_verbose_enabled()) {
+                fprintf(stderr, "frpc_client_send_yamux_frame_bytes: connection closed\n");
+            }
+            return FRPC_ERROR_CONNECTION_CLOSED;
+        }
+        total_sent += (size_t)sent;
+    }
+
+    return (int)total_sent;
+}
+
+// Send FRP protocol message via client socket (with encryption after login)
+int frpc_client_send_msg(frpc_client_t* client, uint8_t type, const char* json, size_t json_len) {
+    if (!client) {
+        return FRPC_ERROR_INVALID_PARAM;
+    }
+    if (!client->is_connected || client->socket_fd < 0) {
+        return FRPC_ERROR_NETWORK;
+    }
+    
+    // If crypto stream is available, send encrypted
+    if (client->crypto_stream) {
+        // Build message: type (1 byte) + length (8 bytes big-endian) + json
+        size_t msg_total = 1 + 8 + json_len;
+        uint8_t* msg_buf = (uint8_t*)malloc(msg_total);
+        if (!msg_buf) {
+            return FRPC_ERROR_MEMORY;
+        }
+        
+        msg_buf[0] = type;
+        frpc_write_be64(&msg_buf[1], (int64_t)json_len);
+        if (json_len > 0 && json) {
+            memcpy(&msg_buf[9], json, json_len);
+        }
+        
+        int ret = frp_crypto_write(client->crypto_stream, client->socket_fd, msg_buf, msg_total);
+        free(msg_buf);
+        
+        if (ret < 0) {
+            if (frpc_verbose_enabled()) {
+                fprintf(stderr, "frpc_client_send_msg: crypto write failed\n");
+            }
+            return FRPC_ERROR_NETWORK;
+        }
+        
+        if (frpc_verbose_enabled()) {
+            fprintf(stdout, "frpc_client_send_msg: sent encrypted message type=%c, len=%zu\n", (char)type, json_len);
+        }
+        return FRPC_SUCCESS;
+    }
+    
+    // No crypto stream, send plaintext (should not happen after login)
+    if (frpc_send_msg_fd(client->socket_fd, type, json, json_len) != 0) {
+        if (frpc_verbose_enabled()) {
+            fprintf(stderr, "frpc_client_send_msg: failed to send message type=%c\n", (char)type);
+        }
+        return FRPC_ERROR_NETWORK;
+    }
+    
+    if (frpc_verbose_enabled()) {
+        fprintf(stdout, "frpc_client_send_msg: sent message type=%c, len=%zu\n", (char)type, json_len);
+    }
+    return FRPC_SUCCESS;
+}
+
+// Helper to read exact bytes from crypto stream
+static int frpc_crypto_read_exact(frp_crypto_stream_t* stream, int fd, uint8_t* buf, size_t len, int timeout_ms) {
+    size_t off = 0;
+    while (off < len) {
+        int n = frp_crypto_read(stream, fd, buf + off, len - off, timeout_ms);
+        if (n < 0) {
+            return -1;
+        }
+        if (n == 0) {
+            wrapped_set_errno(WRAPPED_ECONNRESET);
+            return -1;
+        }
+        off += (size_t)n;
+    }
+    return 0;
+}
+
+// Read FRP protocol message via client socket (with decryption after login)
+int frpc_client_read_msg(frpc_client_t* client, uint8_t* type_out, char** json_out, size_t* json_len_out, int timeout_ms) {
+    if (!client || !type_out || !json_out || !json_len_out) {
+        return FRPC_ERROR_INVALID_PARAM;
+    }
+    if (!client->is_connected || client->socket_fd < 0) {
+        return FRPC_ERROR_NETWORK;
+    }
+    
+    // If crypto stream is available, read encrypted
+    if (client->crypto_stream) {
+        // Read type byte
+        uint8_t type = 0;
+        if (frpc_crypto_read_exact(client->crypto_stream, client->socket_fd, &type, 1, timeout_ms) != 0) {
+            if (frpc_verbose_enabled()) {
+                fprintf(stderr, "frpc_client_read_msg: crypto read type failed\n");
+            }
+            return FRPC_ERROR_NETWORK;
+        }
+        
+        // Read length (8 bytes big-endian)
+        uint8_t len_be[8];
+        if (frpc_crypto_read_exact(client->crypto_stream, client->socket_fd, len_be, 8, timeout_ms) != 0) {
+            if (frpc_verbose_enabled()) {
+                fprintf(stderr, "frpc_client_read_msg: crypto read length failed\n");
+            }
+            return FRPC_ERROR_NETWORK;
+        }
+        
+        int64_t msg_len = frpc_read_be64(len_be);
+        if (msg_len < 0 || msg_len > FRPC_MAX_MSG_LENGTH) {
+            if (frpc_verbose_enabled()) {
+                fprintf(stderr, "frpc_client_read_msg: invalid message length %lld\n", (long long)msg_len);
+            }
+            return FRPC_ERROR_PROTO;
+        }
+        
+        // Read payload
+        char* payload = (char*)malloc((size_t)msg_len + 1);
+        if (!payload) {
+            return FRPC_ERROR_MEMORY;
+        }
+        
+        if (msg_len > 0) {
+            if (frpc_crypto_read_exact(client->crypto_stream, client->socket_fd, (uint8_t*)payload, (size_t)msg_len, timeout_ms) != 0) {
+                if (frpc_verbose_enabled()) {
+                    fprintf(stderr, "frpc_client_read_msg: crypto read payload failed\n");
+                }
+                free(payload);
+                return FRPC_ERROR_NETWORK;
+            }
+        }
+        payload[msg_len] = '\0';
+        
+        *type_out = type;
+        *json_out = payload;
+        *json_len_out = (size_t)msg_len;
+        
+        if (frpc_verbose_enabled()) {
+            fprintf(stdout, "frpc_client_read_msg: received encrypted message type=%c, len=%zu\n", (char)type, (size_t)msg_len);
+        }
+        return FRPC_SUCCESS;
+    }
+    
+    // No crypto stream, read plaintext
+    if (frpc_read_msg_fd(client->socket_fd, type_out, json_out, json_len_out, timeout_ms) != 0) {
+        if (frpc_verbose_enabled()) {
+            fprintf(stderr, "frpc_client_read_msg: failed to read message\n");
+        }
+        return FRPC_ERROR_NETWORK;
+    }
+    
+    if (frpc_verbose_enabled()) {
+        fprintf(stdout, "frpc_client_read_msg: received message type=%c, len=%zu\n", (char)*type_out, *json_len_out);
+    }
+    return FRPC_SUCCESS;
+}
+
+// Get client run_id
+const char* frpc_client_get_run_id(frpc_client_t* client) {
+    if (!client) {
+        return NULL;
+    }
+    return client->run_id;
+}
+
+// Get server address from client config
+const char* frpc_client_get_server_addr(frpc_client_t* client) {
+    if (!client) {
+        return NULL;
+    }
+    return client->config.server_addr;
+}
+
+// Get server port from client config
+uint16_t frpc_client_get_server_port(frpc_client_t* client) {
+    if (!client) {
+        return 0;
+    }
+    return client->config.server_port;
+}
+
+// Dial a new TCP connection to the FRP server
+int frpc_dial_server(frpc_client_t* client) {
+    if (!client) {
+        return FRPC_ERROR_INVALID_PARAM;
+    }
+    
+    int fd = frpc_dial_tcp(client->config.server_addr, client->config.server_port);
+    if (fd < 0) {
+        if (frpc_verbose_enabled()) {
+            fprintf(stderr, "frpc_dial_server: failed to connect to %s:%d\n",
+                    client->config.server_addr, client->config.server_port);
+        }
+        return FRPC_ERROR_NETWORK;
+    }
+    
+    if (frpc_verbose_enabled()) {
+        fprintf(stdout, "frpc_dial_server: connected to %s:%d, fd=%d\n",
+                client->config.server_addr, client->config.server_port, fd);
+    }
+    return fd;
+}
+
+// Send FRP message on a specific file descriptor
+int frpc_send_msg_on_fd(int fd, uint8_t type, const char* json, size_t json_len) {
+    if (fd < 0 || !json) {
+        return FRPC_ERROR_INVALID_PARAM;
+    }
+    
+    if (frpc_send_msg_fd(fd, type, json, json_len) != 0) {
+        if (frpc_verbose_enabled()) {
+            fprintf(stderr, "frpc_send_msg_on_fd: failed to send message type=%c on fd=%d\n", (char)type, fd);
+        }
+        return FRPC_ERROR_NETWORK;
+    }
+    
+    if (frpc_verbose_enabled()) {
+        fprintf(stdout, "frpc_send_msg_on_fd: sent message type=%c, len=%zu on fd=%d\n", (char)type, json_len, fd);
+    }
+    return FRPC_SUCCESS;
+}
+
+// Read FRP message from a specific file descriptor
+int frpc_read_msg_from_fd(int fd, uint8_t* type_out, char** json_out, size_t* json_len_out, int timeout_ms) {
+    if (fd < 0 || !type_out || !json_out || !json_len_out) {
+        return FRPC_ERROR_INVALID_PARAM;
+    }
+    
+    if (frpc_read_msg_fd(fd, type_out, json_out, json_len_out, timeout_ms) != 0) {
+        if (frpc_verbose_enabled()) {
+            fprintf(stderr, "frpc_read_msg_from_fd: failed to read message from fd=%d\n", fd);
+        }
+        return FRPC_ERROR_NETWORK;
+    }
+    
+    if (frpc_verbose_enabled()) {
+        fprintf(stdout, "frpc_read_msg_from_fd: received message type=%c, len=%zu from fd=%d\n", (char)*type_out, *json_len_out, fd);
+    }
+    return FRPC_SUCCESS;
+}

@@ -150,6 +150,16 @@ time_t wrapped_time(time_t *tloc) {
     return time(tloc);
 }
 
+void wrapped_usleep(unsigned int usec) {
+    usleep(usec);
+}
+
+uint64_t wrapped_get_time_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
+}
+
 int wrapped_isspace(int c) {
     return isspace(c);
 }

@@ -66,6 +66,15 @@ This document describes the intended architecture and the key alignment points a
 
 ## Practical STCP send/recv notes (current implementation)
 
+- **Core responsibility boundary (embedded-first)**
+  - `tiny-frpc/` must not perform `listen/accept` or own OS event loops.
+  - All platform I/O (including any “listening” behavior) belongs in `wrapper/*` or the embedding application.
+  - STCP is modeled as a state machine driven by:
+    - `frpc_stcp_receive(proxy, bytes...)` for inbound bytes
+    - `on_write(user_ctx, bytes...)` callback for outbound bytes (called by Yamux `write_fn`)
+    - `on_connection(user_ctx, connected, err)` for lifecycle
+    - `on_data(user_ctx, payload...)` for delivered stream payload
+
 - **STCP data send is gated by Yamux stream existence, not by `is_connected`**
   - In `tiny-frpc/source/frpc-stcp.c`, `frpc_stcp_send()` sends when a Yamux session exists and `active_stream_id != 0`.
   - This makes server-side echo possible immediately after accepting a new incoming stream (server does not receive an ACK).

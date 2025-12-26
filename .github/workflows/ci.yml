@@ -1,316 +1,192 @@
-# GitHub Actions CI/CD for tiny-frpc
-# Builds and tests demo binaries for Linux, macOS (Intel + Apple Silicon), and Windows
-# Creates releases automatically when tags are pushed
-
 name: CI
 
 on:
   push:
-    branches: [main]
-    tags: ['v*']
+    branches: [main, master, develop]
   pull_request:
-    branches: [main]
-
-env:
-  PROJECT_NAME: tiny-frpc-demo
+    branches: [main, master, develop]
 
 jobs:
-  # ============================================================================
-  # Linux amd64
-  # ============================================================================
-  build-linux-amd64:
+  build-and-test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install gcc
+
+      - name: Download Go modules
+        run: |
+          go mod download
+        env:
+          GOPROXY: https://goproxy.cn,direct
+
+      - name: Build C libraries
+        run: make all
+
+      - name: Run C unit tests
+        run: make c-test
+
+      - name: Run Yamux CGO tests
+        run: make yamux-test
+
+      - name: Run FRPC CGO tests
+        run: make frpc-test
+
+      - name: Build shared library for bindings
+        run: make bindings-shared
+
+      - name: Run Python bindings tests
+        run: make python-bindings-test
+
+      - name: Run Node.js bindings tests
+        run: make nodejs-bindings-test
+
+      - name: Run Rust bindings tests
+        if: runner.os == 'Linux' || runner.os == 'macOS'
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          source $HOME/.cargo/env
+          make rust-bindings-test
+
+  multi-channel-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Setup Go
+      - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.21'
+          cache: true
 
-      - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y make gcc
+      - name: Download Go modules
+        run: go mod download
+        env:
+          GOPROXY: https://goproxy.cn,direct
 
-      - name: Build
+      - name: Build C libraries
+        run: make all
+
+      - name: Run multi-channel STCP test
+        run: make frpc-multi-channel-test
+
+  e2e-test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies (Ubuntu)
+        if: runner.os == 'Linux'
         run: |
-          make install
+          sudo apt-get update
+          sudo apt-get install -y build-essential
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install gcc
+
+      - name: Download Go modules
+        run: go mod download
+        env:
+          GOPROXY: https://goproxy.cn,direct
+
+      - name: Build C libraries and demo
+        run: |
           make all
           make bindings-shared
           make demo-stcp
 
-      - name: Test C and CGO
-        run: make test
+      - name: Run Python E2E tests
+        run: make python-e2e-test
 
-      - name: Test Bindings (Python, Node.js, Rust)
-        run: make test-bindings
+      - name: Run Node.js E2E tests
+        run: make nodejs-e2e-test
 
-      - name: Package artifacts
-        run: |
-          mkdir -p artifacts/linux-amd64/{lib,bindings,demo}
-          # Static libraries
-          cp build/*.a artifacts/linux-amd64/lib/
-          # Shared library for bindings
-          cp build/libfrpc-bindings.so artifacts/linux-amd64/lib/
-          # Demo binaries
-          cp build/demo_stcp_frps build/demo_stcp_server build/demo_stcp_visitor build/demo_stcp_local_client artifacts/linux-amd64/demo/
-          # Bindings source
-          cp -r bindings/python artifacts/linux-amd64/bindings/
-          cp -r bindings/nodejs artifacts/linux-amd64/bindings/
-          cp -r bindings/rust artifacts/linux-amd64/bindings/
-          cp bindings/README.md artifacts/linux-amd64/bindings/
-          # Include headers
-          mkdir -p artifacts/linux-amd64/include
-          cp tiny-frpc/include/*.h artifacts/linux-amd64/include/
-          # Documentation
-          cp demo/stcp/README.md artifacts/linux-amd64/demo/
-          cp README.md artifacts/linux-amd64/
-          cd artifacts && tar -czvf ${PROJECT_NAME}-linux-amd64.tar.gz linux-amd64
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.PROJECT_NAME }}-linux-amd64
-          path: artifacts/${{ env.PROJECT_NAME }}-linux-amd64.tar.gz
-
-  # ============================================================================
-  # macOS amd64 (Intel)
-  # ============================================================================
-  build-darwin-amd64:
-    runs-on: macos-15  # Intel Mac (macos-13 deprecated)
+  coverage:
+    runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Setup Go
+      - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.21'
+          cache: true
 
-      - name: Build
-        run: |
-          make install
-          make all
-          make bindings-shared
-          make demo-stcp
-
-      - name: Test C and CGO
-        run: make test
-
-      - name: Test Bindings (Python, Node.js, Rust)
-        run: make test-bindings
-
-      - name: Package artifacts
-        run: |
-          mkdir -p artifacts/darwin-amd64/{lib,bindings,demo}
-          # Static libraries
-          cp build/*.a artifacts/darwin-amd64/lib/
-          # Shared library for bindings
-          cp build/libfrpc-bindings.so artifacts/darwin-amd64/lib/
-          # Demo binaries (exclude .dSYM directories)
-          find build -maxdepth 1 -name 'demo_stcp_*' -type f -exec cp {} artifacts/darwin-amd64/demo/ \;
-          # Bindings source
-          cp -r bindings/python artifacts/darwin-amd64/bindings/
-          cp -r bindings/nodejs artifacts/darwin-amd64/bindings/
-          cp -r bindings/rust artifacts/darwin-amd64/bindings/
-          cp bindings/README.md artifacts/darwin-amd64/bindings/
-          # Include headers
-          mkdir -p artifacts/darwin-amd64/include
-          cp tiny-frpc/include/*.h artifacts/darwin-amd64/include/
-          # Documentation
-          cp demo/stcp/README.md artifacts/darwin-amd64/demo/
-          cp README.md artifacts/darwin-amd64/
-          cd artifacts && tar -czvf ${PROJECT_NAME}-darwin-amd64.tar.gz darwin-amd64
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          name: ${{ env.PROJECT_NAME }}-darwin-amd64
-          path: artifacts/${{ env.PROJECT_NAME }}-darwin-amd64.tar.gz
+          python-version: '3.11'
 
-  # ============================================================================
-  # macOS arm64 (Apple Silicon)
-  # ============================================================================
-  build-darwin-arm64:
-    runs-on: macos-15  # Apple Silicon
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
+      - name: Download Go modules
+        run: go mod download
+        env:
+          GOPROXY: https://goproxy.cn,direct
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.21'
+      - name: Run coverage (>=80%)
+        run: make coverage
 
-      - name: Build
-        run: |
-          make install
-          make all
-          make bindings-shared
-          make demo-stcp
-
-      - name: Test C and CGO
-        run: make test
-
-      - name: Test Bindings (Python, Node.js, Rust)
-        run: make test-bindings
-
-      - name: Package artifacts
-        run: |
-          mkdir -p artifacts/darwin-arm64/{lib,bindings,demo}
-          # Static libraries
-          cp build/*.a artifacts/darwin-arm64/lib/
-          # Shared library for bindings
-          cp build/libfrpc-bindings.so artifacts/darwin-arm64/lib/
-          # Demo binaries (exclude .dSYM directories)
-          find build -maxdepth 1 -name 'demo_stcp_*' -type f -exec cp {} artifacts/darwin-arm64/demo/ \;
-          # Bindings source
-          cp -r bindings/python artifacts/darwin-arm64/bindings/
-          cp -r bindings/nodejs artifacts/darwin-arm64/bindings/
-          cp -r bindings/rust artifacts/darwin-arm64/bindings/
-          cp bindings/README.md artifacts/darwin-arm64/bindings/
-          # Include headers
-          mkdir -p artifacts/darwin-arm64/include
-          cp tiny-frpc/include/*.h artifacts/darwin-arm64/include/
-          # Documentation
-          cp demo/stcp/README.md artifacts/darwin-arm64/demo/
-          cp README.md artifacts/darwin-arm64/
-          cd artifacts && tar -czvf ${PROJECT_NAME}-darwin-arm64.tar.gz darwin-arm64
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.PROJECT_NAME }}-darwin-arm64
-          path: artifacts/${{ env.PROJECT_NAME }}-darwin-arm64.tar.gz
-
-  # ============================================================================
-  # Windows amd64 (native build and test using MSYS2)
-  # ============================================================================
-  build-windows-amd64:
-    runs-on: windows-latest
-    defaults:
-      run:
-        shell: msys2 {0}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Setup MSYS2
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: UCRT64
-          update: true
-          install: >-
-            mingw-w64-ucrt-x86_64-gcc
-            mingw-w64-ucrt-x86_64-go
-            mingw-w64-ucrt-x86_64-python
-            mingw-w64-ucrt-x86_64-python-pip
-            mingw-w64-ucrt-x86_64-rust
-            make
-            zip
-
-      - name: Build
-        run: |
-          make WRAPPER_DIR=wrapper/windows LDFLAGS="-lws2_32" install
-          make WRAPPER_DIR=wrapper/windows LDFLAGS="-lws2_32" all
-          make WRAPPER_DIR=wrapper/windows LDFLAGS="-lws2_32" bindings-shared
-          make WRAPPER_DIR=wrapper/windows LDFLAGS="-lws2_32" demo-stcp || true
-
-      - name: Test C and CGO
-        run: make WRAPPER_DIR=wrapper/windows LDFLAGS="-lws2_32" test
-
-      - name: Test Bindings (Python and Rust)
-        run: |
-          # Python bindings test
-          make WRAPPER_DIR=wrapper/windows LDFLAGS="-lws2_32" python || true
-          # Rust bindings test
-          make WRAPPER_DIR=wrapper/windows LDFLAGS="-lws2_32" rust || true
-          # Note: Node.js binding test skipped on Windows due to node-gyp complexity
-
-      - name: Package artifacts
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path artifacts/windows-amd64/lib
-          New-Item -ItemType Directory -Force -Path artifacts/windows-amd64/bindings
-          New-Item -ItemType Directory -Force -Path artifacts/windows-amd64/demo
-          New-Item -ItemType Directory -Force -Path artifacts/windows-amd64/include
-          # Static libraries
-          Copy-Item build/*.a artifacts/windows-amd64/lib/ -ErrorAction SilentlyContinue
-          # Demo binaries
-          Get-ChildItem build/demo_stcp_* -File | ForEach-Object {
-            $destName = if ($_.Extension -eq '.exe') { $_.Name } else { $_.Name + '.exe' }
-            Copy-Item $_.FullName "artifacts/windows-amd64/demo/$destName"
-          }
-          # Bindings source
-          Copy-Item -Recurse bindings/python artifacts/windows-amd64/bindings/
-          Copy-Item -Recurse bindings/nodejs artifacts/windows-amd64/bindings/
-          Copy-Item -Recurse bindings/rust artifacts/windows-amd64/bindings/
-          Copy-Item bindings/README.md artifacts/windows-amd64/bindings/
-          # Include headers
-          Copy-Item tiny-frpc/include/*.h artifacts/windows-amd64/include/
-          # Documentation
-          Copy-Item demo/stcp/README.md artifacts/windows-amd64/demo/
-          Copy-Item README.md artifacts/windows-amd64/
-          Compress-Archive -Path artifacts/windows-amd64 -DestinationPath "artifacts/$env:PROJECT_NAME-windows-amd64.zip"
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.PROJECT_NAME }}-windows-amd64
-          path: artifacts/${{ env.PROJECT_NAME }}-windows-amd64.zip
-
-  # ============================================================================
-  # Release - Triggered on tags (e.g., v1.0.0)
-  # ============================================================================
-  release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-linux-amd64, build-darwin-amd64, build-darwin-arm64, build-windows-amd64]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      - name: List artifacts
-        run: find artifacts -type f
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          name: Release ${{ github.ref_name }}
-          body: |
-            ## tiny-frpc ${{ github.ref_name }}
-            
-            Cross-platform FRP client library with STCP support.
-            
-            ### Package Contents
-            
-            Each archive includes:
-            - `lib/` - Static libraries (`.a`) and shared library (`libfrpc-bindings.so`)
-            - `include/` - C header files for embedding
-            - `bindings/` - Language bindings (Python, Node.js, Rust)
-            - `demo/` - STCP demo binaries
-            - `README.md` - Documentation
-            
-            ### Downloads
-            | Platform | Architecture | File |
-            |----------|--------------|------|
-            | Linux | amd64 | `${{ env.PROJECT_NAME }}-linux-amd64.tar.gz` |
-            | macOS | amd64 (Intel) | `${{ env.PROJECT_NAME }}-darwin-amd64.tar.gz` |
-            | macOS | arm64 (Apple Silicon) | `${{ env.PROJECT_NAME }}-darwin-arm64.tar.gz` |
-            | Windows | amd64 | `${{ env.PROJECT_NAME }}-windows-amd64.zip` |
-            
-            ### Usage
-            See `README.md` in the archive for usage instructions.
-          files: |
-            artifacts/${{ env.PROJECT_NAME }}-linux-amd64/${{ env.PROJECT_NAME }}-linux-amd64.tar.gz
-            artifacts/${{ env.PROJECT_NAME }}-darwin-amd64/${{ env.PROJECT_NAME }}-darwin-amd64.tar.gz
-            artifacts/${{ env.PROJECT_NAME }}-darwin-arm64/${{ env.PROJECT_NAME }}-darwin-arm64.tar.gz
-            artifacts/${{ env.PROJECT_NAME }}-windows-amd64/${{ env.PROJECT_NAME }}-windows-amd64.zip

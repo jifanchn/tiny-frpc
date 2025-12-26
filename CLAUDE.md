@@ -8,30 +8,38 @@ This file provides guidance to Claude Code (claude.ai/code) when working with th
    - `tiny-frpc/` contains the core C implementation of `frpc` and `yamux` targeting embedded / resource-constrained environments.
    - Keep dependencies minimal, APIs stable, and memory usage disciplined. Follow Linux C conventions.
 
-2. **Upstream source is the protocol specification**
+2. **Protocol core must NOT own platform I/O (no listen/accept in `tiny-frpc/`)**
+   - The protocol core must stay **platform-agnostic**: no `listen(2)`, `accept(2)`, or OS-specific polling loops inside `tiny-frpc/`.
+   - All network syscalls (dial/read/write/select, and any “listening” behavior if needed) must live in `wrapper/*` or the application layer.
+   - STCP in `tiny-frpc/` is treated as a **send/receive state machine**:
+     - Caller feeds inbound bytes into `frpc_stcp_receive()`
+     - Core emits outbound bytes via the configured write callback
+     - Core reports lifecycle via `on_connection` and delivers payload via `on_data`
+
+3. **Upstream source is the protocol specification**
    - FRP behavior must match `third-party/frp`.
    - Yamux behavior must match `third-party/yamux`.
    - If unsure, read upstream source first. Do not guess protocol behavior.
 
-3. **`wrapper/linux` is a portability layer**
+4. **`wrapper/linux` is a portability layer**
    - `wrapper/linux` provides POSIX wrappers (socket/read/write/select/getaddrinfo, etc.) for building/testing on Linux/POSIX.
    - Platform-specific differences must stay in the wrapper layer, not scattered across the protocol core.
 
-4. **Testing layers**
+5. **Testing layers**
    - `tests/`: pure C unit tests for the C libraries (no Go dependency).
    - `cmd/`: C ↔ Go interoperability tests (CGO). Go implementations are the reference.
 
-5. **Development order**
+6. **Development order**
    - Make `tests/` solid first (edge cases, repeatable).
    - Then fix `cmd/` interop tests until strictly passing (`yamux` + `frpc-stcp`).
    - Ensure `wrapper/linux` builds/links reliably in the build system (Makefile/CMake).
    - Only then touch `bindings/` (Node/Python/Rust) and make examples/tests pass.
 
-6. **Dependency management**
+7. **Dependency management**
    - `third-party/frp` and `third-party/yamux` are git submodules and must be kept in sync with the Go tests.
    - Prefer `go.mod` `replace => ./third-party/*` to avoid module-vs-submodule drift.
 
-7. **Build artifacts**
+8. **Build artifacts**
    - `build/` and `build-cov/` are build outputs and must be ignored and never committed.
 
 ## Project overview

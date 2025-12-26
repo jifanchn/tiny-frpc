@@ -3,6 +3,7 @@
  * @brief Lightweight utility helpers (embedded-friendly)
  */
 #include "../include/tools.h"
+#include "wrapper.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -40,21 +41,18 @@ uint16_t tools_ntohs(uint16_t netshort) {
 
 /* 
  * Time helper.
- * NOTE: This is platform-dependent and should be replaced on the target platform.
- * The implementation below is a simple counter-based stub.
+ * Uses wrapper layer for platform portability.
  */
-static uint64_t time_counter = 0;
-
 uint64_t tools_get_time_ms(void) {
-    /* 
-     * Embedded targets should implement this using hardware timers, RTC, etc.
-     */
-    return time_counter++;
+    return wrapped_get_time_ms();
 }
 
 void tools_init(void) {
-    /* Initialize internal state (time counter stub, etc.) */
-    time_counter = 0;
+    /* Initialize internal state if needed */
+}
+
+void tools_sleep_ms(uint32_t ms) {
+    wrapped_usleep(ms * 1000);
 } 
 
 // -----------------------------
