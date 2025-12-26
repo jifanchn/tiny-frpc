@@ -13,14 +13,14 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            target: linux-amd64
-            ext: .so
+            platform: linux-x86_64
+            shared_lib_ext: so
           - os: macos-latest
-            target: darwin-amd64
-            ext: .dylib
+            platform: darwin-arm64
+            shared_lib_ext: so
           - os: windows-latest
-            target: windows-amd64
-            ext: .dll
+            platform: windows-x86_64
+            shared_lib_ext: dll
 
     steps:
       - name: Checkout repository
@@ -52,21 +52,82 @@ jobs:
         run: |
           brew install gcc
 
+      - name: Download Go modules
+        run: go mod download
+        env:
+          GOPROXY: https://goproxy.cn,direct
+
+      - name: Build static libraries
+        run: make all
+
       - name: Build shared library
         run: make bindings-shared
 
-      - name: Rename artifact
-        run: |
-          mkdir -p dist
-          cp build/libfrpc-bindings${{ matrix.ext }} dist/libfrpc-bindings-${{ matrix.target }}${{ matrix.ext }} || \
-          cp build/libfrpc-bindings.so dist/libfrpc-bindings-${{ matrix.target }}${{ matrix.ext }}
+      - name: Build demo executables (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: make demo-stcp
+
+      - name: Create release directory
+        run: mkdir -p release
         shell: bash
 
-      - name: Upload artifact
+      - name: Package release artifacts (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          # Static libraries
+          cp build/libfrpc.a release/
+          cp build/libyamux.a release/
+          cp build/libcrypto.a release/
+          cp build/libtools.a release/
+          cp build/libwrapper.a release/
+          cp build/libfrpc-bindings.a release/
+          
+          # Shared library
+          cp build/bindings-shlib/libfrpc-bindings.${{ matrix.shared_lib_ext }} release/
+          
+          # Demo executables
+          cp build/demo_stcp_server release/
+          cp build/demo_stcp_visitor release/
+          cp build/demo_stcp_local_client release/
+          cp build/demo_stcp_frps release/
+          
+          # Headers
+          mkdir -p release/include
+          cp tiny-frpc/include/*.h release/include/
+          cp wrapper/linux/wrapper.h release/include/
+          
+          # Package
+          tar -czvf tiny-frpc-${{ matrix.platform }}.tar.gz -C release .
+        shell: bash
+
+      - name: Package release artifacts (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          # Static libraries
+          cp build/libfrpc.a release/
+          cp build/libyamux.a release/
+          cp build/libcrypto.a release/
+          cp build/libtools.a release/
+          cp build/libwrapper.a release/
+          cp build/libfrpc-bindings.a release/
+          
+          # Shared library
+          cp build/bindings-shlib/libfrpc-bindings.${{ matrix.shared_lib_ext }} release/
+          
+          # Headers
+          mkdir -p release/include
+          cp tiny-frpc/include/*.h release/include/
+          cp wrapper/windows/wrapper.h release/include/
+          
+          # Package
+          cd release && 7z a -tzip ../tiny-frpc-${{ matrix.platform }}.zip .
+        shell: bash
+
+      - name: Upload release artifact
         uses: actions/upload-artifact@v4
         with:
-          name: libfrpc-bindings-${{ matrix.target }}
-          path: dist/
+          name: tiny-frpc-${{ matrix.platform }}
+          path: tiny-frpc-${{ matrix.platform }}.*
 
   create-release:
     needs: build-release
@@ -78,10 +139,17 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-          merge-multiple: true
 
-      - name: Create Release
+      - name: List artifacts
+        run: find artifacts -type f
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          files: artifacts/*
+          files: |
+            artifacts/tiny-frpc-linux-x86_64/tiny-frpc-linux-x86_64.tar.gz
+            artifacts/tiny-frpc-darwin-arm64/tiny-frpc-darwin-arm64.tar.gz
+            artifacts/tiny-frpc-windows-x86_64/tiny-frpc-windows-x86_64.zip
           generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
