@@ -331,10 +331,10 @@ nodejs-e2e-test: bindings-shared demo-stcp
 	@cp -f $(BINDINGS_SHLIB) bindings/nodejs/build/libfrpc-bindings.so
 	cd bindings/nodejs && node test_e2e.js --frps-path ../../$(DEMO_STCP_FRPS_BIN)
 
-rust-bindings-test: bindings-shared
+rust-e2e-test: bindings-shared
 	cd bindings/rust && cargo test --quiet
 
-e2e-test: python-e2e-test nodejs-e2e-test rust-bindings-test
+e2e-test: python-e2e-test nodejs-e2e-test rust-e2e-test
 bindings-test: e2e-test
 
 # ------------------------
@@ -443,7 +443,7 @@ coverage: clean
 .PHONY: all install clean test c-test cmd-test \
 	tools-test wrapper-test config-test error-test bindings-api-test yamux-unit-test stcp-unit-test frpc-core-test crypto-test \
 	yamux-test frpc-test cmd-coverage coverage \
-	bindings-shared rust-bindings-test bindings-test test-bindings \
+	bindings-shared rust-e2e-test bindings-test test-bindings \
 	frps-build python-e2e-test nodejs-e2e-test e2e-test e2e \
 	python-e2e-frps e2e-frps \
 	demo-stcp demo-stcp-run demo \
