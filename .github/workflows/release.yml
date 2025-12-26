@@ -18,7 +18,7 @@ jobs:
           - os: macos-latest
             platform: darwin-arm64
             shared_lib_ext: so
-          - os: macos-13
+          - os: macos-15-intel
             platform: darwin-x86_64
             shared_lib_ext: so
           - os: windows-latest
