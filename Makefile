@@ -66,7 +66,13 @@ endif
 # Note: -Wno-error=format allows format warnings (uint64_t vs %llu differs by platform)
 # Note: -Wno-error=unknown-pragmas allows #pragma comment (MSVC-only) on mingw
 CFLAGS := -Wall -Werror -Wno-error=format -Wno-error=unknown-pragmas -g -I$(INCLUDE_DIR) -I$(WRAPPER_DIR) $(CFLAGS_COV)
-LDFLAGS := $(LDFLAGS_COV)
+
+# Windows builds need Winsock library
+ifeq ($(findstring windows,$(WRAPPER_DIR)),windows)
+  LDFLAGS := $(LDFLAGS_COV) -lws2_32
+else
+  LDFLAGS := $(LDFLAGS_COV)
+endif
 
 # Node-gyp helper (some environments don't expose `node-gyp` in PATH, but npm bundles it).
 NODE_GYP_BIN := $(shell command -v node-gyp 2>/dev/null)
@@ -337,6 +343,9 @@ rust-e2e-test: bindings-shared
 
 e2e-test: python-e2e-test nodejs-e2e-test rust-e2e-test
 bindings-test: e2e-test
+# Aliases for CI
+python-bindings-test: python-e2e-test
+nodejs-bindings-test: nodejs-e2e-test
 
 # ------------------------
 # E2E tests with real FRPS (requires frps-build)
