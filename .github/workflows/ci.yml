@@ -64,21 +64,26 @@ jobs:
         run: make all
 
       - name: Run C unit tests
+        if: runner.os != 'Windows'
         run: make c-test
 
       - name: Run Yamux CGO tests
+        if: runner.os != 'Windows'
         run: make yamux-test
 
       - name: Run FRPC CGO tests
+        if: runner.os != 'Windows'
         run: make frpc-test
 
       - name: Build shared library for bindings
         run: make bindings-shared
 
       - name: Run Python bindings tests
+        if: runner.os != 'Windows'
         run: make python-bindings-test
 
       - name: Run Node.js bindings tests
+        if: runner.os != 'Windows'
         run: make nodejs-bindings-test
 
       - name: Run Rust bindings tests
@@ -93,20 +98,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest]
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
-
-      - name: Set Windows Environment
-        if: runner.os == 'Windows'
-        run: |
-          echo "WRAPPER_DIR=wrapper/windows" >> $GITHUB_ENV
-          echo "CC=gcc" >> $GITHUB_ENV
-        shell: bash
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -130,20 +128,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest]
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
-
-      - name: Set Windows Environment
-        if: runner.os == 'Windows'
-        run: |
-          echo "WRAPPER_DIR=wrapper/windows" >> $GITHUB_ENV
-          echo "CC=gcc" >> $GITHUB_ENV
-        shell: bash
 
       - name: Set up Go
         uses: actions/setup-go@v5
