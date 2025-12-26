@@ -89,12 +89,24 @@ jobs:
           make rust-bindings-test
 
   multi-channel-test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Set Windows Environment
+        if: runner.os == 'Windows'
+        run: |
+          echo "WRAPPER_DIR=wrapper/windows" >> $GITHUB_ENV
+          echo "CC=gcc" >> $GITHUB_ENV
+        shell: bash
 
       - name: Set up Go
         uses: actions/setup-go@v5
