@@ -302,7 +302,7 @@ frpc-test: all
 frpc-multi-channel-test: all
 	$(GO) clean -cache
 	CGO_CFLAGS="-I$(abspath $(INCLUDE_DIR)) -I$(abspath $(WRAPPER_DIR))" $(GO) build -tags "multi_channel" -a -o $(BUILD_DIR)/frpc_multi_channel_test \
-		cmd/frpc_test/multi_channel_test.go cmd/frpc_test/coverage_flush_stub.go
+		cmd/frpc_test/multi_channel.go cmd/frpc_test/coverage_flush_stub.go
 	$(RUN_ENV) $(BUILD_DIR)/frpc_multi_channel_test
 
 cmd-test: yamux-test frpc-test
