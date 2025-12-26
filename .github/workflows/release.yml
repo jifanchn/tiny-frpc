@@ -76,7 +76,7 @@ jobs:
           mkdir -p release/include
           mkdir -p release/demo
           mkdir -p release/bindings/python
-          mkdir -p release/bindings/nodejs
+          mkdir -p release/bindings/nodejs/build
           mkdir -p release/bindings/rust/src
           mkdir -p release/bindings/rust/examples
         shell: bash
@@ -121,17 +121,17 @@ jobs:
           cp bindings/rust/Cargo.toml release/bindings/rust/
           cp bindings/rust/build.rs release/bindings/rust/
           cp bindings/rust/src/lib.rs release/bindings/rust/src/
-          cp bindings/rust/examples/*.rs release/bindings/rust/examples/ 2>/dev/null || true
+          cp bindings/rust/examples/*.rs release/bindings/rust/examples/
           
           # Bindings README
           cp bindings/README.md release/bindings/
           
-          # Create symlink for shared lib in bindings dirs
-          cd release/bindings/python && ln -sf ../../lib/libfrpc-bindings.so libfrpc-bindings.so
-          cd ../../../release/bindings/nodejs && mkdir -p build && ln -sf ../../lib/libfrpc-bindings.so build/libfrpc-bindings.so
+          # Copy shared lib directly to bindings dirs (no symlinks - tar doesn't preserve them well)
+          cp build/libfrpc-bindings.so release/bindings/python/
+          cp build/libfrpc-bindings.so release/bindings/nodejs/build/
           
           # Package
-          cd release && tar -czvf ../tiny-frpc-${{ matrix.platform }}.tar.gz .
+          tar -czvf tiny-frpc-${{ matrix.platform }}.tar.gz -C release .
         shell: bash
 
       - name: Package release artifacts (Windows)
@@ -170,10 +170,16 @@ jobs:
           cp bindings/rust/Cargo.toml release/bindings/rust/
           cp bindings/rust/build.rs release/bindings/rust/
           cp bindings/rust/src/lib.rs release/bindings/rust/src/
-          cp bindings/rust/examples/*.rs release/bindings/rust/examples/ 2>/dev/null || true
+          cp bindings/rust/examples/*.rs release/bindings/rust/examples/
           
           # Bindings README
           cp bindings/README.md release/bindings/
+          
+          # Copy dll to bindings dirs
+          cp build/libfrpc-bindings.so release/bindings/python/libfrpc-bindings.dll 2>/dev/null || \
+          cp build/libfrpc-bindings.dll release/bindings/python/ 2>/dev/null || true
+          cp build/libfrpc-bindings.so release/bindings/nodejs/build/libfrpc-bindings.dll 2>/dev/null || \
+          cp build/libfrpc-bindings.dll release/bindings/nodejs/build/ 2>/dev/null || true
           
           # Package
           cd release && 7z a -tzip ../tiny-frpc-${{ matrix.platform }}.zip .
@@ -231,8 +237,8 @@ jobs:
             ├── include/                # C headers
             ├── demo/                   # Demo executables (Linux/macOS only)
             └── bindings/               # Language bindings (ready to use)
-                ├── python/
-                ├── nodejs/
+                ├── python/             # Contains libfrpc-bindings.so
+                ├── nodejs/             # Contains build/libfrpc-bindings.so
                 └── rust/
             ```
             
