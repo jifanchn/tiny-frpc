@@ -1,4 +1,4 @@
-# TINY-FRPC implementation notes
+# TINY-FRPC Implementation Notes
 
 This document describes the intended architecture and the key alignment points against upstream FRP/Yamux sources.
 
@@ -8,7 +8,7 @@ This document describes the intended architecture and the key alignment points a
 - Keep dependencies to the bare minimum (standard C + a replaceable POSIX wrapper layer).
 - Match protocol behavior to upstream source code (`third-party/frp`, `third-party/yamux`).
 
-## High-level architecture
+## High-level Architecture
 
 ```
 +-------------+      +----------------+      +-------------+
@@ -28,16 +28,33 @@ This document describes the intended architecture and the key alignment points a
 
 ## Components
 
-- **Protocol core**
-  - `tiny-frpc/source/frpc.c`: FRP message framing + a minimal control-connection skeleton.
-  - `tiny-frpc/source/frpc-stcp.c`: STCP API surface and test harness glue (full end-to-end STCP is still WIP).
-  - `tiny-frpc/source/yamux.c`: Yamux protocol implementation.
-- **Utilities**
-  - `tiny-frpc/source/tools.c`: byte-order helpers, time abstraction, MD5 helper, FRP auth key helper.
-- **Portability**
-  - `wrapper/linux/`: POSIX wrapper layer (sockets, read/write, getaddrinfo, etc.).
+### Protocol Core (`tiny-frpc/`)
 
-## Protocol alignment checkpoints (must match upstream)
+| File | Description |
+|------|-------------|
+| `source/frpc.c` | FRP message framing, control connection, Login/LoginResp |
+| `source/frpc-stcp.c` | STCP Visitor and Server API |
+| `source/yamux.c` | Yamux multiplexing protocol |
+| `source/tools.c` | Byte-order helpers, time abstraction, MD5, auth key |
+| `source/crypto.c` | AES-128-CFB encryption for post-Login messages |
+
+### Headers (`tiny-frpc/include/`)
+
+| File | Description |
+|------|-------------|
+| `frpc.h` | FRP client interface |
+| `frpc-stcp.h` | STCP proxy interface |
+| `yamux.h` | Yamux session/stream interface |
+| `tools.h` | Utility functions |
+| `crypto.h` | Encryption interface |
+
+### Portability Layer (`wrapper/`)
+
+| Path | Description |
+|------|-------------|
+| `wrapper/linux/` | POSIX wrapper (sockets, read/write, getaddrinfo, etc.) |
+
+## Protocol Alignment Checkpoints
 
 ### Yamux (`third-party/yamux`)
 
@@ -51,40 +68,78 @@ This document describes the intended architecture and the key alignment points a
    - Client-initiated streams are odd, server-initiated streams are even.
    - StreamID 0 is reserved for session-level frames.
 
+3. **Ping flags**
+   - Request: `SYN` flag set
+   - Response: `ACK` flag set (echoes the opaque id in Length)
+
 ### FRP (`third-party/frp`)
 
 1. **Control message framing**
    - FRP uses `golib/msg/json`: `1 byte type` + `8 bytes big-endian int64 length` + `JSON payload`.
 
-2. **Auth key derivation**
+2. **Message types** (see `FRP-PROTOCOL.md` for full list)
+   - Login = 'o', LoginResp = '1'
+   - NewProxy = 'p', NewProxyResp = '2'
+   - NewVisitorConn = 'v', NewVisitorConnResp = '3'
+   - Ping = 'h', Pong = '4'
+
+3. **Auth key derivation**
    - `util.GetAuthKey(token, timestamp)` is `md5(token + strconv.FormatInt(timestamp, 10))` in lowercase hex.
-   - In C we expose the equivalent helper as `tools_get_auth_key`.
+   - In C we expose the equivalent helper as `tools_get_auth_key()`.
 
-3. **TCPMux staged bring-up**
-   - `frps` enables `Transport.TCPMux=true` by default (control connection enters a mux session).
-   - For incremental bring-up, tests may temporarily disable TCPMux; the long-term goal is strict C↔Go alignment with TCPMux enabled.
+4. **Post-Login encryption**
+   - After Login, messages are encrypted with AES-128-CFB.
+   - Key derived via PBKDF2(token, "frp", 64, 16, SHA1).
+   - IV is sent as the first 16 bytes of the encrypted stream.
 
-## Practical STCP send/recv notes (current implementation)
+## STCP Implementation Details
 
-- **Core responsibility boundary (embedded-first)**
-  - `tiny-frpc/` must not perform `listen/accept` or own OS event loops.
-  - All platform I/O (including any “listening” behavior) belongs in `wrapper/*` or the embedding application.
-  - STCP is modeled as a state machine driven by:
-    - `frpc_stcp_receive(proxy, bytes...)` for inbound bytes
-    - `on_write(user_ctx, bytes...)` callback for outbound bytes (called by Yamux `write_fn`)
-    - `on_connection(user_ctx, connected, err)` for lifecycle
-    - `on_data(user_ctx, payload...)` for delivered stream payload
+### Visitor Flow
 
-- **STCP data send is gated by Yamux stream existence, not by `is_connected`**
-  - In `tiny-frpc/source/frpc-stcp.c`, `frpc_stcp_send()` sends when a Yamux session exists and `active_stream_id != 0`.
-  - This makes server-side echo possible immediately after accepting a new incoming stream (server does not receive an ACK).
-  - The `is_connected` flag is currently best treated as an informational state used for callbacks/logging, not a strict precondition for sending.
+1. `frpc_client_connect()` - Login to frps, get run_id
+2. `frpc_dial_server()` - Open new TCP connection for visitor
+3. Send `NewVisitorConn` message with sign_key = md5(sk + timestamp)
+4. Receive `NewVisitorConnResp`
+5. Initialize Yamux client session on the connection
+6. `yamux_session_open_stream()` - Open data stream
+7. `frpc_stcp_send()` / `frpc_stcp_receive()` - Exchange data
 
-## Testing strategy
+### Server Flow
 
-- `tests/`: pure C unit tests for the C libraries.
-- `cmd/`: CGO interoperability tests that validate behavior against upstream Go peers.
+1. `frpc_client_connect()` - Login to frps, get run_id
+2. `frpc_stcp_server_register()` - Send NewProxy, get NewProxyResp
+3. Initialize Yamux server session (waits for work connections)
+4. `on_new_stream` callback - Accept incoming streams from visitors
+5. `frpc_stcp_send()` / `frpc_stcp_receive()` - Exchange data
+
+### Data Send Gating
+
+**STCP data send is gated by Yamux stream existence, not by `is_connected`**
+
+In `frpc-stcp.c`, `frpc_stcp_send()` sends when:
+- Yamux session exists (`proxy->yamux_session != NULL`)
+- Active stream exists (`proxy->active_stream_id != 0`)
+
+This makes server-side echo possible immediately after accepting a new incoming stream (server does not receive an ACK - it sends the ACK to the client).
+
+The `is_connected` flag is currently best treated as an informational state used for callbacks/logging, not a strict precondition for sending.
+
+## Testing Strategy
+
+| Directory | Description |
+|-----------|-------------|
+| `tests/` | Pure C unit tests for the C libraries |
+| `cmd/yamux_test/` | CGO interop tests for Yamux |
+| `cmd/frpc_test/` | CGO interop tests for STCP |
+
+Run all tests:
+```bash
+make test
+```
 
 ## Logging
 
-- `TINY_FRPC_VERBOSE=1` enables extra C-side debug logs (kept off by default to reduce noise).
+- Default: quiet (minimal output)
+- `V=1`: Enable verbose Makefile output
+- `TINY_FRPC_VERBOSE=1`: Enable extra C-side debug logs
+- `#define DEBUG_LOG`: Compile-time debug logging in yamux.c

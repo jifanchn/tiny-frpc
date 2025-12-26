@@ -375,13 +375,15 @@ static int test_frp_crypto_stream_multiple_writes(void) {
 static int test_crypto_error_handling(void) {
     printf("\n=== Testing crypto error handling ===\n");
     
-    // NULL token
+    // NULL token - now returns valid stream (for FRPS compatibility with empty token)
     frp_crypto_stream_t* stream = frp_crypto_stream_new(NULL);
-    TEST_ASSERT(stream == NULL, "frp_crypto_stream_new(NULL) should return NULL");
+    TEST_ASSERT(stream != NULL, "frp_crypto_stream_new(NULL) should return valid stream (FRPS compatibility)");
+    frp_crypto_stream_free(stream);
     
-    // Empty token
+    // Empty token - now returns valid stream (for FRPS compatibility)
     stream = frp_crypto_stream_new("");
-    TEST_ASSERT(stream == NULL, "frp_crypto_stream_new(empty) should return NULL");
+    TEST_ASSERT(stream != NULL, "frp_crypto_stream_new(empty) should return valid stream (FRPS compatibility)");
+    frp_crypto_stream_free(stream);
     
     // Free NULL stream (should not crash)
     frp_crypto_stream_free(NULL);

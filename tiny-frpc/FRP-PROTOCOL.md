@@ -1,7 +1,7 @@
 # FRP Protocol Deep Dive
 
 This document provides a detailed analysis of the FRP (Fast Reverse Proxy) protocol,
-based on reverse-engineering the official `frp` implementation (v0.62.1).
+based on the official `frp` implementation (v0.62.1) in `third-party/frp`.
 
 ## Overview
 
@@ -18,24 +18,33 @@ binary header containing the message type and length.
 ```
 
 - **Type**: 1 byte, identifies the message type (see below)
-- **Length**: 8 bytes, big-endian, length of JSON payload
+- **Length**: 8 bytes, big-endian int64, length of JSON payload
 - **Payload**: JSON-encoded message body
 
 ## Message Types
 
-| Type | Char | Direction      | Message          |
-|------|------|----------------|------------------|
-| 'o'  | 111  | Client→Server  | Login            |
-| '1'  |  49  | Server→Client  | LoginResp        |
-| 'h'  | 104  | Client→Server  | Ping             |
-| 'i'  | 105  | Server→Client  | Pong             |
-| 'p'  | 112  | Client→Server  | NewProxy         |
-| '2'  |  50  | Server→Client  | NewProxyResp     |
-| 'v'  | 118  | Client→Server  | NewVisitorConn   |
-| '3'  |  51  | Server→Client  | NewVisitorConnResp |
-| 'b'  |  98  | Server→Client  | ReqWorkConn      |
-| 'c'  |  99  | Client→Server  | NewWorkConn      |
-| 'd'  | 100  | Server→Client  | StartWorkConn    |
+Source: `third-party/frp/pkg/msg/msg.go`
+
+| Type | Char | ASCII | Direction      | Message              |
+|------|------|-------|----------------|----------------------|
+| 'o'  | o    | 111   | Client→Server  | Login                |
+| '1'  | 1    |  49   | Server→Client  | LoginResp            |
+| 'p'  | p    | 112   | Client→Server  | NewProxy             |
+| '2'  | 2    |  50   | Server→Client  | NewProxyResp         |
+| 'c'  | c    |  99   | Client→Server  | CloseProxy           |
+| 'w'  | w    | 119   | Client→Server  | NewWorkConn          |
+| 'r'  | r    | 114   | Server→Client  | ReqWorkConn          |
+| 's'  | s    | 115   | Server→Client  | StartWorkConn        |
+| 'v'  | v    | 118   | Client→Server  | NewVisitorConn       |
+| '3'  | 3    |  51   | Server→Client  | NewVisitorConnResp   |
+| 'h'  | h    | 104   | Client→Server  | Ping                 |
+| '4'  | 4    |  52   | Server→Client  | Pong                 |
+| 'u'  | u    | 117   | Both           | UDPPacket            |
+| 'i'  | i    | 105   | Client→Server  | NatHoleVisitor       |
+| 'n'  | n    | 110   | Client→Server  | NatHoleClient        |
+| 'm'  | m    | 109   | Server→Client  | NatHoleResp          |
+| '5'  | 5    |  53   | Both           | NatHoleSid           |
+| '6'  | 6    |  54   | Client→Server  | NatHoleReport        |
 
 ## Connection Modes
 
@@ -62,7 +71,7 @@ When `transport.tcpMux = true` (default), the connection flow is:
      │←── NewProxyResp (Type '2') ────────────────│
      │                                              │
      │── Ping (Type 'h') ─────────────────────────→│
-     │←── Pong (Type 'i') ────────────────────────│
+     │←── Pong (Type '4') ────────────────────────│
 ```
 
 In TCPMux mode:
@@ -129,6 +138,40 @@ plaintext := aes_cfb_decrypt(key, iv, ciphertext)
 | TCPMux    | Plain   | Encrypted      |
 | Non-TCPMux| Plain   | Encrypted      |
 
+## Authentication
+
+### Token Authentication
+
+Source: `third-party/frp/pkg/util/util/util.go`
+
+```go
+func GetAuthKey(token string, timestamp int64) (key string) {
+    md5Ctx := md5.New()
+    md5Ctx.Write([]byte(token))
+    md5Ctx.Write([]byte(strconv.FormatInt(timestamp, 10)))
+    data := md5Ctx.Sum(nil)
+    return hex.EncodeToString(data)
+}
+```
+
+Login message structure:
+```json
+{
+  "version": "tiny-frpc",
+  "hostname": "",
+  "os": "darwin",
+  "arch": "arm64",
+  "user": "",
+  "timestamp": 1234567890,
+  "privilege_key": "<md5(token + timestamp_string)>",
+  "run_id": "",
+  "pool_count": 0
+}
+```
+
+- `privilege_key = md5(token + strconv.FormatInt(timestamp, 10))`
+- Even with empty token, `privilege_key = md5("" + timestamp_string) = md5(timestamp_string)`
+
 ## STCP Protocol Flow
 
 Secret TCP (STCP) allows peer-to-peer communication through frps:
@@ -151,33 +194,76 @@ frpc (visitor) ──[new connection]──→ frps
                ──NewVisitorConn──→ frps
                ←──NewVisitorConnResp──
                
-               [Yamux stream established for data]
+               [Data flows on this connection]
 ```
 
 ### Data Flow
 
 After visitor connects:
-1. Visitor sends NewVisitorConn to frps
-2. frps matches visitor to server proxy
-3. Both sides establish Yamux session
-4. Data flows through Yamux streams
+1. Visitor sends NewVisitorConn to frps (on a separate connection)
+2. frps matches visitor to server proxy via proxy_name and sk verification
+3. frps relays data between visitor and server work connections
+4. Data flows directly on the visitor connection (may use Yamux for multiplexing)
 
-## Authentication
+## Key Message Structures
 
-### Token Authentication
+### Login
 
-```json
-{
-  "version": "tiny-frpc",
-  "timestamp": 1234567890,
-  "privilege_key": "md5(token + timestamp)",
-  "run_id": "",
-  "pool_count": 0
+```go
+type Login struct {
+    Version      string            `json:"version,omitempty"`
+    Hostname     string            `json:"hostname,omitempty"`
+    Os           string            `json:"os,omitempty"`
+    Arch         string            `json:"arch,omitempty"`
+    User         string            `json:"user,omitempty"`
+    PrivilegeKey string            `json:"privilege_key,omitempty"`
+    Timestamp    int64             `json:"timestamp,omitempty"`
+    RunID        string            `json:"run_id,omitempty"`
+    Metas        map[string]string `json:"metas,omitempty"`
+    PoolCount    int               `json:"pool_count,omitempty"`
 }
 ```
 
-- `privilege_key = md5(token + timestamp_string)`
-- Even with empty token, `privilege_key = md5(timestamp_string)`
+### NewProxy (for STCP)
+
+```go
+type NewProxy struct {
+    ProxyName      string   `json:"proxy_name,omitempty"`
+    ProxyType      string   `json:"proxy_type,omitempty"`  // "stcp"
+    Sk             string   `json:"sk,omitempty"`          // secret key
+    AllowUsers     []string `json:"allow_users,omitempty"` // ["*"] = all
+    UseEncryption  bool     `json:"use_encryption,omitempty"`
+    UseCompression bool     `json:"use_compression,omitempty"`
+}
+```
+
+### NewVisitorConn
+
+```go
+type NewVisitorConn struct {
+    RunID          string `json:"run_id,omitempty"`
+    ProxyName      string `json:"proxy_name,omitempty"`  // target server name
+    SignKey        string `json:"sign_key,omitempty"`    // md5(sk + timestamp)
+    Timestamp      int64  `json:"timestamp,omitempty"`
+    UseEncryption  bool   `json:"use_encryption,omitempty"`
+    UseCompression bool   `json:"use_compression,omitempty"`
+}
+```
+
+## tiny-frpc Implementation Status
+
+| Feature                      | Status  | Notes                       |
+|------------------------------|---------|------------------------------|
+| Message Encoding/Decoding    | ✅      | Correct format               |
+| Login/LoginResp              | ✅      | Working                      |
+| Token Authentication         | ✅      | md5(token + timestamp)       |
+| NewProxy/NewProxyResp        | ✅      | Working                      |
+| NewVisitorConn/Resp          | ✅      | Working                      |
+| Ping/Pong                    | ✅      | Working                      |
+| Post-Login Encryption        | ✅      | AES-128-CFB with PBKDF2      |
+| Yamux Multiplexing           | ✅      | Full implementation          |
+| STCP Server Role             | ✅      | CGO interop tests pass       |
+| STCP Visitor Role            | ✅      | CGO interop tests pass       |
 
 ## Differences: Mock FRPS vs Real FRPS
 
@@ -188,33 +274,3 @@ After visitor connects:
 | WorkConn Pool     | No               | Yes                |
 | Proxy Routing     | No               | Yes                |
 | Authentication    | Basic            | Full (Token/OIDC)  |
-
-## tiny-frpc Implementation Status
-
-| Feature                      | Status  | Notes                              |
-|------------------------------|---------|-------------------------------------|
-| Message Encoding/Decoding    | ✅      | Correct format                      |
-| Login/LoginResp              | ✅      | Working                             |
-| Token Authentication         | ✅      | md5(token + timestamp)              |
-| NewProxy/NewProxyResp        | ✅      | Works with mock and real FRPS       |
-| NewVisitorConn/Resp          | ✅      | Works with mock and real FRPS       |
-| Ping/Pong                    | ✅      | Working                             |
-| Post-Login Encryption        | ✅      | AES-128-CFB with PBKDF2-SHA1 key    |
-| TCPMux (Yamux)               | ⚠️      | Yamux implemented for data, not control |
-| Real FRPS Compatibility      | ✅      | Full STCP support with encryption   |
-
-## API for Encryption Control
-
-The `use_encryption` option controls whether to use AES-128-CFB encryption after Login:
-
-- **Python**: `FRPCClient(addr, port, token, use_encryption=True)`
-- **Node.js**: `new FRPCClient(addr, port, token, { useEncryption: true })`
-- **C**: `frpc_set_encryption(handle, true)`
-
-Default is `true` for real FRPS compatibility. Set to `false` for testing with mock FRPS.
-
-## Next Steps
-
-1. **TCPMux support for control**: frpc should support Yamux multiplexing for control channel
-2. **WorkConn handling**: Implement ReqWorkConn/NewWorkConn flow for TCP/UDP proxies
-3. **Full bidirectional data verification**: Add echo server tests for data correctness

@@ -466,6 +466,7 @@ func createFRPClientConfig(frpsAddr string, frpsPort int, token string) *C.frpc_
 	config.token = C.CString(token)
 	config.heartbeat_interval = 30
 	config.tls_enable = C.bool(false)
+	config.use_encryption = C.bool(true)
 
 	return &config
 }

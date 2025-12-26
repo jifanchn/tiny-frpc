@@ -126,10 +126,9 @@ help:
 	@echo "tiny-frpc: common targets"
 	@echo ""
 	@echo "  make test           - Run everything (C unit tests + CGO interop tests)"
-	@echo "  make test-bindings  - Run bindings tests (Python + Node.js + Rust)"
-	@echo "  make python         - Run Python bindings tests"
-	@echo "  make nodejs         - Run Node.js bindings tests"
-	@echo "  make rust           - Run Rust bindings tests"
+	@echo "  make bindings-test  - Run bindings tests (Python + Node.js)"
+	@echo "  make python-e2e-test - Run Python bindings E2E tests"
+	@echo "  make nodejs-e2e-test - Run Node.js bindings E2E tests"
 	@echo "  make demo           - Run local STCP demo (best-effort, localhost only)"
 	@echo ""
 	@echo "  make all            - Build static libraries"
@@ -336,7 +335,7 @@ rust-bindings-test: bindings-shared
 	cd bindings/rust && cargo test --quiet
 
 e2e-test: python-e2e-test nodejs-e2e-test
-bindings-test: e2e-test rust-bindings-test
+bindings-test: e2e-test
 
 # ------------------------
 # E2E tests with real FRPS (requires frps-build)

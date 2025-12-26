@@ -123,8 +123,9 @@ static void handle_connection(int conn_fd, const char* run_id) {
                 break;
                 
             case 'h': // Ping (heartbeat)
-                // Reply with Pong
-                send_message(conn_fd, 'i', "{}", 2); // Pong
+                // Reply with Pong (TypePong = '4', NOT 'i')
+                // See third-party/frp/pkg/msg/msg.go: TypePong = '4'
+                send_message(conn_fd, '4', "{}", 2); // Pong
                 break;
                 
             case 'v': // NewVisitorConn
