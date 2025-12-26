@@ -265,14 +265,17 @@ int tools_md5_hex(const uint8_t* data, size_t len, char out_hex[33]) {
 }
 
 int tools_get_auth_key(const char* token, int64_t timestamp, char out_hex[33]) {
-    if (!token || !out_hex) {
+    if (!out_hex) {
         return -1;
     }
+    
+    // Allow NULL or empty token (treat as empty string)
+    const char* token_str = token ? token : "";
 
     tools_md5_ctx_t ctx;
     uint8_t digest[16];
     tools_md5_init_ctx(&ctx);
-    tools_md5_update_ctx(&ctx, (const uint8_t*)token, strlen(token));
+    tools_md5_update_ctx(&ctx, (const uint8_t*)token_str, strlen(token_str));
 
     char ts_buf[32];
     snprintf(ts_buf, sizeof(ts_buf), "%lld", (long long)timestamp);

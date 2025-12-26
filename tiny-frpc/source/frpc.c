@@ -379,14 +379,16 @@ int frpc_client_connect(frpc_client_t* client) {
     // Login message (TypeLogin = 'o')
     int64_t ts = (int64_t)wrapped_time(NULL);
     char privilege_key[33] = {0};
-    if (client->config.token && client->config.token[0] != '\0') {
-        if (tools_get_auth_key(client->config.token, ts, privilege_key) != 0) {
-            wrapped_close(fd);
-            return FRPC_ERROR_INTERNAL;
-        }
-    } else {
-        // Empty token is allowed in some setups, but token-auth in tests expects non-empty.
-        privilege_key[0] = '\0';
+    
+    // Always compute privilege_key using md5(token + timestamp)
+    // Even with empty token, this computes md5("" + timestamp) = md5(timestamp_str)
+    // This matches the Go frp behavior where GetAuthKey(token, timestamp) is always called
+    const char* token_str = (client->config.token && client->config.token[0] != '\0') 
+                            ? client->config.token 
+                            : "";
+    if (tools_get_auth_key(token_str, ts, privilege_key) != 0) {
+        wrapped_close(fd);
+        return FRPC_ERROR_INTERNAL;
     }
 
     // Set PoolCount=0 to avoid frps sending many ReqWorkConn immediately after login (simplifies embedded bring-up).

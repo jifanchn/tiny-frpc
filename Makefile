@@ -339,6 +339,14 @@ e2e-test: python-e2e-test nodejs-e2e-test
 bindings-test: e2e-test rust-bindings-test
 
 # ------------------------
+# E2E tests with real FRPS (requires frps-build)
+# ------------------------
+python-e2e-frps: bindings-shared frps-build
+	cd bindings/python && python3 -B test_e2e_frps.py --frps-path ../../$(FRPS_BIN)
+
+e2e-frps: python-e2e-frps
+
+# ------------------------
 # High-level shortcuts (for a simpler UX)
 # ------------------------
 test-bindings: bindings-test
@@ -438,5 +446,6 @@ coverage: clean
 	yamux-test frpc-test cmd-coverage coverage \
 	bindings-shared rust-bindings-test bindings-test test-bindings \
 	frps-build python-e2e-test nodejs-e2e-test e2e-test e2e \
+	python-e2e-frps e2e-frps \
 	demo-stcp demo-stcp-run demo \
 	help
