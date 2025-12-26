@@ -25,7 +25,7 @@ static int processStreamFlags(struct yamux_session* s, struct yamux_stream* stre
 /* Core dependencies */
 #include <stdlib.h> /* malloc, free */
 #include <string.h> /* memcpy, memset */
-#include <time.h>   /* clock_gettime */
+
 
 // Max frame payload size
 #define YAMUX_MAX_FRAME_PAYLOAD_SIZE (1024 * 1024) // 1MB
@@ -1021,10 +1021,9 @@ int yamux_session_receive(yamux_session_t* session, const uint8_t* data, size_t 
 }
 
 // Get current time (milliseconds).
+// Get current time (milliseconds).
 uint64_t yamux_time_now(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
+    return tools_get_time_ms();
 }
 
 // Check whether a Yamux session is closed.

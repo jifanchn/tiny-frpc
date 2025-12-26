@@ -193,12 +193,24 @@ static int on_stream_data_wrapper(void* stream_user_data, const uint8_t* data, s
         return -1; // Indicate error
     }
     
+    int result = 0;
+    
     // Invoke user-provided data callback.
     if (proxy->config.on_data) {
-        return proxy->config.on_data(proxy->user_ctx, (uint8_t*)data, len);
+        result = proxy->config.on_data(proxy->user_ctx, (uint8_t*)data, len);
     }
     
-    return 0;
+    // After processing data, send WindowUpdate to restore the receive window.
+    // This is essential for flow control to work properly.
+    if (proxy->yamux_session && proxy->active_stream_id != 0 && len > 0) {
+        int wu_ret = yamux_stream_window_update(proxy->yamux_session, proxy->active_stream_id, (uint32_t)len);
+        if (wu_ret != 0 && frpc_stcp_verbose_enabled()) {
+            fprintf(stderr, "Warning: yamux_stream_window_update failed for stream %u: %d\n", 
+                    proxy->active_stream_id, wu_ret);
+        }
+    }
+    
+    return result;
 }
 
 static void on_stream_established_wrapper(void* stream_user_data) {

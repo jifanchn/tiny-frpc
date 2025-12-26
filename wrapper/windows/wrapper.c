@@ -212,6 +212,10 @@ time_t wrapped_time(time_t *tloc) {
     return time(tloc);
 }
 
+uint64_t wrapped_get_time_ms(void) {
+    return GetTickCount64();
+}
+
 int wrapped_isspace(int c) {
     return isspace(c);
 }

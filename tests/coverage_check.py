@@ -15,7 +15,7 @@ def main() -> int:
         return 1
 
     # Only count core C source files: tiny-frpc/source + wrapper/linux
-    include_substrs = ("tiny-frpc/source/", "wrapper/linux/")
+    include_substrs = ("tiny-frpc/source/", "wrapper/")
 
     lines = 0
     covered = 0

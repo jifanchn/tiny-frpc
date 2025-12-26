@@ -4,7 +4,7 @@
 package main
 
 /*
-#cgo CFLAGS: -I../../tiny-frpc/include -I../../wrapper/linux -DDEBUG_LOG
+#cgo CFLAGS: -DDEBUG_LOG
 #cgo LDFLAGS: -L../../build -lyamux -ltools -lwrapper -lm
 
 #include <stdlib.h>

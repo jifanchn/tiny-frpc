@@ -287,21 +287,21 @@ c-test: all tools-test wrapper-test yamux-unit-test config-test error-test bindi
 # ------------------------
 yamux-test: all
 	$(GO) clean -cache
-	$(GO) build -tags "yamux_basic" -a -o $(BUILD_DIR)/yamux_basic_test cmd/yamux_test/basic.go cmd/yamux_test/coverage_flush_stub.go
-	$(GO) build -tags "yamux_protocol" -a -o $(BUILD_DIR)/yamux_protocol_test cmd/yamux_test/protocol.go cmd/yamux_test/coverage_flush_stub.go
-	$(GO) build -tags "yamux_interop" -a -o $(BUILD_DIR)/yamux_interop_test cmd/yamux_test/interop.go cmd/yamux_test/coverage_flush_stub.go
+	CGO_CFLAGS="-I$(abspath $(INCLUDE_DIR)) -I$(abspath $(WRAPPER_DIR))" $(GO) build -tags "yamux_basic" -a -o $(BUILD_DIR)/yamux_basic_test cmd/yamux_test/basic.go cmd/yamux_test/coverage_flush_stub.go
+	CGO_CFLAGS="-I$(abspath $(INCLUDE_DIR)) -I$(abspath $(WRAPPER_DIR))" $(GO) build -tags "yamux_protocol" -a -o $(BUILD_DIR)/yamux_protocol_test cmd/yamux_test/protocol.go cmd/yamux_test/coverage_flush_stub.go
+	CGO_CFLAGS="-I$(abspath $(INCLUDE_DIR)) -I$(abspath $(WRAPPER_DIR))" $(GO) build -tags "yamux_interop" -a -o $(BUILD_DIR)/yamux_interop_test cmd/yamux_test/interop.go cmd/yamux_test/coverage_flush_stub.go
 	$(RUN_ENV) $(BUILD_DIR)/yamux_basic_test
 	$(RUN_ENV) $(BUILD_DIR)/yamux_protocol_test
 	$(RUN_ENV) $(BUILD_DIR)/yamux_interop_test
 
 frpc-test: all
 	$(GO) clean -cache
-	$(GO) build -a -o $(BUILD_DIR)/frpc_test ./cmd/frpc_test
+	CGO_CFLAGS="-I$(abspath $(INCLUDE_DIR)) -I$(abspath $(WRAPPER_DIR))" $(GO) build -a -o $(BUILD_DIR)/frpc_test ./cmd/frpc_test
 	$(RUN_ENV) $(BUILD_DIR)/frpc_test $(RUN_ARGS)
 
 frpc-multi-channel-test: all
 	$(GO) clean -cache
-	$(GO) build -tags "multi_channel" -a -o $(BUILD_DIR)/frpc_multi_channel_test \
+	CGO_CFLAGS="-I$(abspath $(INCLUDE_DIR)) -I$(abspath $(WRAPPER_DIR))" $(GO) build -tags "multi_channel" -a -o $(BUILD_DIR)/frpc_multi_channel_test \
 		cmd/frpc_test/multi_channel_test.go cmd/frpc_test/coverage_flush_stub.go
 	$(RUN_ENV) $(BUILD_DIR)/frpc_multi_channel_test
 
@@ -352,7 +352,7 @@ e2e-frps: python-e2e-frps
 test-bindings: bindings-test
 e2e: e2e-test
 demo: demo-stcp-run
-stress: demo-stcp-stress
+stress: demo-stcp-stress-multi
 
 # ------------------------
 # demo/ (Linux/POSIX demos)
@@ -445,6 +445,14 @@ demo-stcp-stress: demo-stcp
 	echo "  - $(BUILD_DIR)/stress_server.log"; \
 	echo "  - $(BUILD_DIR)/stress_visitor.log"
 
+# Multi-channel stress test (multiple parallel visitor-server pairs)
+demo-stcp-stress-multi: demo-stcp
+	@./demo/stcp/multi_stress.sh $(DEMO_STCP_STRESS_CHANNELS) $(DEMO_STCP_STRESS_DURATION) $(DEMO_STCP_STRESS_INTERVAL) 64 512
+
+# Default multi-channel stress test settings
+DEMO_STCP_STRESS_CHANNELS ?= 4
+DEMO_STCP_STRESS_INTERVAL ?= 50
+
 # Interactive stress test (run manually in separate terminals)
 demo-stcp-stress-interactive: demo-stcp
 	@echo "=== STCP Interactive Stress Test ==="
@@ -474,10 +482,10 @@ demo-stcp-stress-interactive: demo-stcp
 # ------------------------
 cmd-coverage: all
 	$(GO) clean -cache
-	CGO_LDFLAGS="$(COV_GO_LDFLAGS) -L$(abspath $(BUILD_DIR))" $(GO) build -tags "covflush yamux_basic" -a -o $(BUILD_DIR)/yamux_basic_test cmd/yamux_test/basic.go cmd/yamux_test/coverage_flush_covflush.go
-	CGO_LDFLAGS="$(COV_GO_LDFLAGS) -L$(abspath $(BUILD_DIR))" $(GO) build -tags "covflush yamux_protocol" -a -o $(BUILD_DIR)/yamux_protocol_test cmd/yamux_test/protocol.go cmd/yamux_test/coverage_flush_covflush.go
-	CGO_LDFLAGS="$(COV_GO_LDFLAGS) -L$(abspath $(BUILD_DIR))" $(GO) build -tags "covflush yamux_interop" -a -o $(BUILD_DIR)/yamux_interop_test cmd/yamux_test/interop.go cmd/yamux_test/coverage_flush_covflush.go
-	CGO_LDFLAGS="$(COV_GO_LDFLAGS) -L$(abspath $(BUILD_DIR))" $(GO) build -tags covflush -a -o $(BUILD_DIR)/frpc_test ./cmd/frpc_test
+	CGO_LDFLAGS="$(COV_GO_LDFLAGS) -L$(abspath $(BUILD_DIR))" CGO_CFLAGS="-I$(abspath $(INCLUDE_DIR)) -I$(abspath $(WRAPPER_DIR))" $(GO) build -tags "covflush yamux_basic" -a -o $(BUILD_DIR)/yamux_basic_test cmd/yamux_test/basic.go cmd/yamux_test/coverage_flush_covflush.go
+	CGO_LDFLAGS="$(COV_GO_LDFLAGS) -L$(abspath $(BUILD_DIR))" CGO_CFLAGS="-I$(abspath $(INCLUDE_DIR)) -I$(abspath $(WRAPPER_DIR))" $(GO) build -tags "covflush yamux_protocol" -a -o $(BUILD_DIR)/yamux_protocol_test cmd/yamux_test/protocol.go cmd/yamux_test/coverage_flush_covflush.go
+	CGO_LDFLAGS="$(COV_GO_LDFLAGS) -L$(abspath $(BUILD_DIR))" CGO_CFLAGS="-I$(abspath $(INCLUDE_DIR)) -I$(abspath $(WRAPPER_DIR))" $(GO) build -tags "covflush yamux_interop" -a -o $(BUILD_DIR)/yamux_interop_test cmd/yamux_test/interop.go cmd/yamux_test/coverage_flush_covflush.go
+	CGO_LDFLAGS="$(COV_GO_LDFLAGS) -L$(abspath $(BUILD_DIR))" CGO_CFLAGS="-I$(abspath $(INCLUDE_DIR)) -I$(abspath $(WRAPPER_DIR))" $(GO) build -tags covflush -a -o $(BUILD_DIR)/frpc_test ./cmd/frpc_test
 	$(RUN_ENV) $(BUILD_DIR)/yamux_basic_test
 	$(RUN_ENV) $(BUILD_DIR)/yamux_protocol_test
 	$(RUN_ENV) $(BUILD_DIR)/yamux_interop_test
@@ -505,5 +513,5 @@ coverage: clean
 	bindings-shared rust-e2e-test bindings-test test-bindings \
 	frps-build python-e2e-test nodejs-e2e-test e2e-test e2e \
 	python-e2e-frps e2e-frps \
-	demo-stcp demo-stcp-run demo demo-stcp-stress demo-stcp-stress-interactive stress \
+	demo-stcp demo-stcp-run demo demo-stcp-stress demo-stcp-stress-multi demo-stcp-stress-interactive stress \
 	help

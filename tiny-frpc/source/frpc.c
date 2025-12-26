@@ -569,14 +569,44 @@ int frpc_client_tick(frpc_client_t* client) {
     uint64_t current_time = tools_get_time_ms();
     
     // Check whether we should send a heartbeat
+    // FRP Ping message format: {"privilege_key":"...", "timestamp":...}
+    // Type: 'h' (TypePing), Response type: '4' (TypePong)
     if (client->config.heartbeat_interval > 0 && 
         current_time - client->last_heartbeat_time >= client->config.heartbeat_interval * 1000) {
         
-        // Send heartbeat message
-        fprintf(stdout, "Sending heartbeat to FRP server\n");
+        // Build FRP Ping message (TypePing = 'h')
+        int64_t ts = (int64_t)wrapped_time(NULL);
+        char privilege_key[33] = {0};
         
-        // TODO: construct and send heartbeat message
-        // ...
+        // Compute privilege_key = md5(token + timestamp)
+        const char* token_str = (client->config.token && client->config.token[0] != '\0') 
+                                ? client->config.token 
+                                : "";
+        if (tools_get_auth_key(token_str, ts, privilege_key) != 0) {
+            if (frpc_verbose_enabled()) {
+                fprintf(stderr, "frpc_client_tick: failed to compute privilege_key\n");
+            }
+            return FRPC_ERROR_INTERNAL;
+        }
+        
+        char ping_json[256];
+        int ping_len = snprintf(ping_json, sizeof(ping_json),
+                               "{\"privilege_key\":\"%s\",\"timestamp\":%lld}",
+                               privilege_key, (long long)ts);
+        
+        if (ping_len > 0 && (size_t)ping_len < sizeof(ping_json)) {
+            int ret = frpc_client_send_msg(client, (uint8_t)'h', ping_json, (size_t)ping_len);
+            if (ret != FRPC_SUCCESS) {
+                if (frpc_verbose_enabled()) {
+                    fprintf(stderr, "frpc_client_tick: failed to send Ping message\n");
+                }
+                // Don't return error, just log and continue
+            } else {
+                if (frpc_verbose_enabled()) {
+                    fprintf(stdout, "Sent FRP Ping (heartbeat) to server\n");
+                }
+            }
+        }
         
         client->last_heartbeat_time = current_time;
     }
