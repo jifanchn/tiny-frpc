@@ -1,0 +1,87 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-release:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-amd64
+            ext: .so
+          - os: macos-latest
+            target: darwin-amd64
+            ext: .dylib
+          - os: windows-latest
+            target: windows-amd64
+            ext: .dll
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set Windows Environment
+        if: runner.os == 'Windows'
+        run: |
+          echo "WRAPPER_DIR=wrapper/windows" >> $GITHUB_ENV
+          echo "CC=gcc" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Install dependencies (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install gcc
+
+      - name: Build shared library
+        run: make bindings-shared
+
+      - name: Rename artifact
+        run: |
+          mkdir -p dist
+          cp build/libfrpc-bindings${{ matrix.ext }} dist/libfrpc-bindings-${{ matrix.target }}${{ matrix.ext }} || \
+          cp build/libfrpc-bindings.so dist/libfrpc-bindings-${{ matrix.target }}${{ matrix.ext }}
+        shell: bash
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libfrpc-bindings-${{ matrix.target }}
+          path: dist/
+
+  create-release:
+    needs: build-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: artifacts/*
+          generate_release_notes: true
