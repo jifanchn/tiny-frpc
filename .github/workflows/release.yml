@@ -18,6 +18,9 @@ jobs:
           - os: macos-latest
             platform: darwin-arm64
             shared_lib_ext: so
+          - os: macos-13
+            platform: darwin-x86_64
+            shared_lib_ext: so
           - os: windows-latest
             platform: windows-x86_64
             shared_lib_ext: dll
@@ -67,59 +70,110 @@ jobs:
         if: runner.os != 'Windows'
         run: make demo-stcp
 
-      - name: Create release directory
-        run: mkdir -p release
+      - name: Create release directory structure
+        run: |
+          mkdir -p release/lib
+          mkdir -p release/include
+          mkdir -p release/demo
+          mkdir -p release/bindings/python
+          mkdir -p release/bindings/nodejs
+          mkdir -p release/bindings/rust/src
+          mkdir -p release/bindings/rust/examples
         shell: bash
 
       - name: Package release artifacts (Linux/macOS)
         if: runner.os != 'Windows'
         run: |
           # Static libraries
-          cp build/libfrpc.a release/
-          cp build/libyamux.a release/
-          cp build/libcrypto.a release/
-          cp build/libtools.a release/
-          cp build/libwrapper.a release/
-          cp build/libfrpc-bindings.a release/
+          cp build/libfrpc.a release/lib/
+          cp build/libyamux.a release/lib/
+          cp build/libcrypto.a release/lib/
+          cp build/libtools.a release/lib/
+          cp build/libwrapper.a release/lib/
+          cp build/libfrpc-bindings.a release/lib/
           
-          # Shared library (directly in build/, not bindings-shlib/)
-          cp build/libfrpc-bindings.so release/
+          # Shared library
+          cp build/libfrpc-bindings.so release/lib/
           
           # Demo executables
-          cp build/demo_stcp_server release/
-          cp build/demo_stcp_visitor release/
-          cp build/demo_stcp_local_client release/
-          cp build/demo_stcp_frps release/
+          cp build/demo_stcp_server release/demo/
+          cp build/demo_stcp_visitor release/demo/
+          cp build/demo_stcp_local_client release/demo/
+          cp build/demo_stcp_frps release/demo/
           
           # Headers
-          mkdir -p release/include
           cp tiny-frpc/include/*.h release/include/
           cp wrapper/linux/wrapper.h release/include/
           
+          # Python bindings
+          cp bindings/python/frpc_python.py release/bindings/python/
+          cp bindings/python/example_stcp_server.py release/bindings/python/
+          cp bindings/python/example_stcp_visitor.py release/bindings/python/
+          
+          # Node.js bindings
+          cp bindings/nodejs/frpc_node.js release/bindings/nodejs/
+          cp bindings/nodejs/frpc_native.c release/bindings/nodejs/
+          cp bindings/nodejs/binding.gyp release/bindings/nodejs/
+          cp bindings/nodejs/package.json release/bindings/nodejs/
+          cp bindings/nodejs/example_stcp_visitor.js release/bindings/nodejs/
+          
+          # Rust bindings
+          cp bindings/rust/Cargo.toml release/bindings/rust/
+          cp bindings/rust/build.rs release/bindings/rust/
+          cp bindings/rust/src/lib.rs release/bindings/rust/src/
+          cp bindings/rust/examples/*.rs release/bindings/rust/examples/ 2>/dev/null || true
+          
+          # Bindings README
+          cp bindings/README.md release/bindings/
+          
+          # Create symlink for shared lib in bindings dirs
+          cd release/bindings/python && ln -sf ../../lib/libfrpc-bindings.so libfrpc-bindings.so
+          cd ../../../release/bindings/nodejs && mkdir -p build && ln -sf ../../lib/libfrpc-bindings.so build/libfrpc-bindings.so
+          
           # Package
-          tar -czvf tiny-frpc-${{ matrix.platform }}.tar.gz -C release .
+          cd release && tar -czvf ../tiny-frpc-${{ matrix.platform }}.tar.gz .
         shell: bash
 
       - name: Package release artifacts (Windows)
         if: runner.os == 'Windows'
         run: |
           # Static libraries
-          cp build/libfrpc.a release/
-          cp build/libyamux.a release/
-          cp build/libcrypto.a release/
-          cp build/libtools.a release/
-          cp build/libwrapper.a release/
-          cp build/libfrpc-bindings.a release/
+          cp build/libfrpc.a release/lib/
+          cp build/libyamux.a release/lib/
+          cp build/libcrypto.a release/lib/
+          cp build/libtools.a release/lib/
+          cp build/libwrapper.a release/lib/
+          cp build/libfrpc-bindings.a release/lib/
           
-          # Shared library (may be .so or .dll depending on mingw config)
-          cp build/libfrpc-bindings.so release/libfrpc-bindings.dll 2>/dev/null || \
-          cp build/libfrpc-bindings.dll release/ 2>/dev/null || \
+          # Shared library
+          cp build/libfrpc-bindings.so release/lib/libfrpc-bindings.dll 2>/dev/null || \
+          cp build/libfrpc-bindings.dll release/lib/ 2>/dev/null || \
           echo "Warning: shared library not found"
           
           # Headers
-          mkdir -p release/include
           cp tiny-frpc/include/*.h release/include/
           cp wrapper/windows/wrapper.h release/include/
+          
+          # Python bindings
+          cp bindings/python/frpc_python.py release/bindings/python/
+          cp bindings/python/example_stcp_server.py release/bindings/python/
+          cp bindings/python/example_stcp_visitor.py release/bindings/python/
+          
+          # Node.js bindings
+          cp bindings/nodejs/frpc_node.js release/bindings/nodejs/
+          cp bindings/nodejs/frpc_native.c release/bindings/nodejs/
+          cp bindings/nodejs/binding.gyp release/bindings/nodejs/
+          cp bindings/nodejs/package.json release/bindings/nodejs/
+          cp bindings/nodejs/example_stcp_visitor.js release/bindings/nodejs/
+          
+          # Rust bindings
+          cp bindings/rust/Cargo.toml release/bindings/rust/
+          cp bindings/rust/build.rs release/bindings/rust/
+          cp bindings/rust/src/lib.rs release/bindings/rust/src/
+          cp bindings/rust/examples/*.rs release/bindings/rust/examples/ 2>/dev/null || true
+          
+          # Bindings README
+          cp bindings/README.md release/bindings/
           
           # Package
           cd release && 7z a -tzip ../tiny-frpc-${{ matrix.platform }}.zip .
@@ -151,7 +205,42 @@ jobs:
           files: |
             artifacts/tiny-frpc-linux-x86_64/tiny-frpc-linux-x86_64.tar.gz
             artifacts/tiny-frpc-darwin-arm64/tiny-frpc-darwin-arm64.tar.gz
+            artifacts/tiny-frpc-darwin-x86_64/tiny-frpc-darwin-x86_64.tar.gz
             artifacts/tiny-frpc-windows-x86_64/tiny-frpc-windows-x86_64.zip
+          body: |
+            ## tiny-frpc Release
+            
+            A lightweight, pure C implementation of FRP client with STCP support.
+            
+            ### Download
+            
+            | Platform | File |
+            |----------|------|
+            | Linux x86_64 | `tiny-frpc-linux-x86_64.tar.gz` |
+            | macOS ARM64 (Apple Silicon) | `tiny-frpc-darwin-arm64.tar.gz` |
+            | macOS x86_64 (Intel) | `tiny-frpc-darwin-x86_64.tar.gz` |
+            | Windows x86_64 | `tiny-frpc-windows-x86_64.zip` |
+            
+            ### Package Contents
+            
+            ```
+            release/
+            ├── lib/                    # Static and shared libraries
+            │   ├── libfrpc-bindings.so # Shared library for bindings
+            │   └── *.a                 # Static libraries
+            ├── include/                # C headers
+            ├── demo/                   # Demo executables (Linux/macOS only)
+            └── bindings/               # Language bindings (ready to use)
+                ├── python/
+                ├── nodejs/
+                └── rust/
+            ```
+            
+            ### Compatible FRPS Server
+            
+            Download FRP server from: https://github.com/fatedier/frp/releases
+            
+            Tested with frps v0.62.x
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
