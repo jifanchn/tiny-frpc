@@ -3,14 +3,11 @@
 #include "frpc.h"
 #include "frpc-stcp.h"
 
-#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/select.h>
 #include <time.h>
-#include <unistd.h>
 
 #include "wrapper.h"
 
@@ -156,7 +153,7 @@ static int pump_network(demo_stcp_ctx_t* ctx, int max_wait_sec) {
 
         int sel = select(maxfd + 1, &rfds, NULL, NULL, &tv);
         if (sel < 0) {
-            if (errno == EINTR) continue;
+            if (wrapped_get_errno() == WRAPPED_EINTR) continue;
             return -1;
         }
         if (sel == 0) {
@@ -168,7 +165,7 @@ static int pump_network(demo_stcp_ctx_t* ctx, int max_wait_sec) {
             if (buf_len >= sizeof(buf)) return -1;
             ssize_t n = wrapped_read(ctx->work_fd, buf + buf_len, sizeof(buf) - buf_len);
             if (n < 0) {
-                if (errno == EINTR) continue;
+                if (wrapped_get_errno() == WRAPPED_EINTR) continue;
                 return -1;
             }
             if (n == 0) {
@@ -263,7 +260,7 @@ int main(int argc, char** argv) {
 
     int work_fd = demo_net_connect_tcp(connect_addr, connect_port_s);
     if (work_fd < 0) {
-        fprintf(stderr, "visitor: failed to connect to %s:%s (errno=%d)\n", connect_addr, connect_port_s, errno);
+        fprintf(stderr, "visitor: failed to connect to %s:%s (errno=%d)\n", connect_addr, connect_port_s, wrapped_get_errno());
         return 1;
     }
 
@@ -368,7 +365,7 @@ int main(int argc, char** argv) {
 
             int sel = select(maxfd + 1, &rfds, NULL, NULL, &tv);
             if (sel < 0) {
-                if (errno == EINTR) continue;
+                if (wrapped_get_errno() == WRAPPED_EINTR) continue;
                 break;
             }
 
@@ -390,7 +387,7 @@ int main(int argc, char** argv) {
                 if (net_len >= sizeof(net_buf)) break;
                 ssize_t n = wrapped_read(work_fd, net_buf + net_len, sizeof(net_buf) - net_len);
                 if (n < 0) {
-                    if (errno == EINTR) continue;
+                    if (wrapped_get_errno() == WRAPPED_EINTR) continue;
                     break;
                 }
                 if (n == 0) {
@@ -419,7 +416,7 @@ int main(int argc, char** argv) {
     } else if (mode == VIS_MODE_LOCAL_FORWARD) {
         ctx.local_listen_fd = demo_net_listen_tcp(bind_addr, bind_port_s, 16);
         if (ctx.local_listen_fd < 0) {
-            fprintf(stderr, "visitor: failed to listen on %s:%s (errno=%d)\n", bind_addr, bind_port_s, errno);
+            fprintf(stderr, "visitor: failed to listen on %s:%s (errno=%d)\n", bind_addr, bind_port_s, wrapped_get_errno());
         } else {
             fprintf(stdout, "visitor: local-forward listening on %s:%s\n", bind_addr, bind_port_s);
             fflush(stdout);
@@ -429,7 +426,7 @@ int main(int argc, char** argv) {
         if (ctx.local_listen_fd >= 0) {
             ctx.local_client_fd = wrapped_accept(ctx.local_listen_fd, NULL, NULL);
             if (ctx.local_client_fd < 0) {
-                fprintf(stderr, "visitor: accept local client failed (errno=%d)\n", errno);
+                fprintf(stderr, "visitor: accept local client failed (errno=%d)\n", wrapped_get_errno());
             } else {
                 fprintf(stdout, "visitor: local client connected\n");
                 fflush(stdout);
@@ -456,14 +453,14 @@ int main(int argc, char** argv) {
 
             int sel = select(maxfd + 1, &rfds, NULL, NULL, &tv);
             if (sel < 0) {
-                if (errno == EINTR) continue;
+                if (wrapped_get_errno() == WRAPPED_EINTR) continue;
                 break;
             }
 
             if (sel > 0 && FD_ISSET(ctx.local_client_fd, &rfds)) {
                 ssize_t n = wrapped_read(ctx.local_client_fd, local_buf, sizeof(local_buf));
                 if (n < 0) {
-                    if (errno == EINTR) continue;
+                    if (wrapped_get_errno() == WRAPPED_EINTR) continue;
                     break;
                 }
                 if (n == 0) {
@@ -476,7 +473,7 @@ int main(int argc, char** argv) {
                 if (net_len >= sizeof(net_buf)) break;
                 ssize_t n = wrapped_read(work_fd, net_buf + net_len, sizeof(net_buf) - net_len);
                 if (n < 0) {
-                    if (errno == EINTR) continue;
+                    if (wrapped_get_errno() == WRAPPED_EINTR) continue;
                     break;
                 }
                 if (n == 0) {

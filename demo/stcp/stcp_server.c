@@ -3,14 +3,11 @@
 #include "frpc.h"
 #include "frpc-stcp.h"
 
-#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/select.h>
 #include <time.h>
-#include <unistd.h>
 
 #include "wrapper.h"
 
@@ -57,7 +54,7 @@ static int accept_with_timeout(int listen_fd, int timeout_sec) {
         return -1;
     }
     if (sel == 0) {
-        errno = ETIMEDOUT;
+    wrapped_set_errno(WRAPPED_ETIMEDOUT);
         return -1;
     }
     return wrapped_accept(listen_fd, NULL, NULL);
@@ -173,7 +170,7 @@ int main(int argc, char** argv) {
 
     int listen_fd = demo_net_listen_tcp(listen_addr, listen_port_s, 16);
     if (listen_fd < 0) {
-        fprintf(stderr, "server: failed to listen on %s:%s (errno=%d)\n", listen_addr, listen_port_s, errno);
+        fprintf(stderr, "server: failed to listen on %s:%s (errno=%d)\n", listen_addr, listen_port_s, wrapped_get_errno());
         return 1;
     }
     fprintf(stdout, "server: listening data-plane on %s:%s, waiting for visitor...\n", listen_addr, listen_port_s);
@@ -181,7 +178,7 @@ int main(int argc, char** argv) {
 
     int work_fd = accept_with_timeout(listen_fd, accept_timeout_sec);
     if (work_fd < 0) {
-        fprintf(stderr, "server: accept failed (errno=%d)\n", errno);
+        fprintf(stderr, "server: accept failed (errno=%d)\n", wrapped_get_errno());
         (void)wrapped_close(listen_fd);
         return 1;
     }
@@ -261,10 +258,10 @@ int main(int argc, char** argv) {
 
         int sel = select(work_fd + 1, &rfds, NULL, NULL, &tv);
         if (sel < 0) {
-            if (errno == EINTR) {
+            if (wrapped_get_errno() == WRAPPED_EINTR) {
                 continue;
             }
-            fprintf(stderr, "server: select failed (errno=%d)\n", errno);
+            fprintf(stderr, "server: select failed (errno=%d)\n", wrapped_get_errno());
             break;
         }
 
@@ -275,10 +272,10 @@ int main(int argc, char** argv) {
             }
             ssize_t n = wrapped_read(work_fd, buf + buf_len, sizeof(buf) - buf_len);
             if (n < 0) {
-                if (errno == EINTR) {
+                if (wrapped_get_errno() == WRAPPED_EINTR) {
                     continue;
                 }
-                fprintf(stderr, "server: read failed (errno=%d)\n", errno);
+                fprintf(stderr, "server: read failed (errno=%d)\n", wrapped_get_errno());
                 break;
             }
             if (n == 0) {

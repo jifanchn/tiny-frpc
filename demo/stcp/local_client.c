@@ -1,12 +1,9 @@
 #include "common.h"
 
-#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/select.h>
-#include <unistd.h>
 
 #include "wrapper.h"
 
@@ -41,12 +38,12 @@ int main(int argc, char** argv) {
 
     int fd = demo_net_connect_tcp(connect_addr, connect_port);
     if (fd < 0) {
-        fprintf(stderr, "local_client: connect %s:%s failed (errno=%d)\n", connect_addr, connect_port, errno);
+        fprintf(stderr, "local_client: connect %s:%s failed (errno=%d)\n", connect_addr, connect_port, wrapped_get_errno());
         return 1;
     }
 
     if (demo_write_all(fd, message, strlen(message)) != 0) {
-        fprintf(stderr, "local_client: write failed (errno=%d)\n", errno);
+        fprintf(stderr, "local_client: write failed (errno=%d)\n", wrapped_get_errno());
         (void)wrapped_close(fd);
         return 1;
     }
