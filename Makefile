@@ -130,6 +130,7 @@ help:
 	@echo "  make e2e            - Run E2E tests with mock FRPS (Python + Node.js + Rust)"
 	@echo "  make e2e-frps       - Run E2E tests with real FRPS"
 	@echo "  make demo           - Run local STCP demo (best-effort, localhost only)"
+	@echo "  make stress         - Run STCP stress test (30s duration)"
 	@echo ""
 	@echo "  make all            - Build static libraries"
 	@echo "  make clean          - Remove build outputs (build/ and build-cov/)"
@@ -351,6 +352,7 @@ e2e-frps: python-e2e-frps
 test-bindings: bindings-test
 e2e: e2e-test
 demo: demo-stcp-run
+stress: demo-stcp-stress
 
 # ------------------------
 # demo/ (Linux/POSIX demos)
@@ -364,9 +366,13 @@ DEMO_STCP_FRPS_BIN := $(BUILD_DIR)/demo_stcp_frps
 DEMO_STCP_SERVER_BIN := $(BUILD_DIR)/demo_stcp_server
 DEMO_STCP_VISITOR_BIN := $(BUILD_DIR)/demo_stcp_visitor
 DEMO_STCP_LOCAL_CLIENT_BIN := $(BUILD_DIR)/demo_stcp_local_client
+DEMO_STCP_STRESS_BIN := $(BUILD_DIR)/demo_stcp_stress
 
 # How many times to run the demo handshake in demo-stcp-run.
 DEMO_STCP_RUN_CYCLES ?= 3
+
+# Default stress test duration in seconds
+DEMO_STCP_STRESS_DURATION ?= 30
 
 $(DEMO_STCP_COMMON_OBJ): $(DEMO_STCP_DIR)/common.c $(DEMO_STCP_DIR)/common.h | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(DEMO_STCP_CFLAGS) -c $(DEMO_STCP_DIR)/common.c -o $@
@@ -383,7 +389,10 @@ $(DEMO_STCP_VISITOR_BIN): $(DEMO_STCP_DIR)/stcp_visitor.c $(DEMO_STCP_COMMON_OBJ
 $(DEMO_STCP_LOCAL_CLIENT_BIN): $(DEMO_STCP_DIR)/local_client.c $(DEMO_STCP_COMMON_OBJ) $(WRAPPER_LIB) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(DEMO_STCP_CFLAGS) -o $@ $(DEMO_STCP_DIR)/local_client.c $(DEMO_STCP_COMMON_OBJ) $(WRAPPER_LIB) -pthread $(LDFLAGS)
 
-demo-stcp: all $(DEMO_STCP_FRPS_BIN) $(DEMO_STCP_SERVER_BIN) $(DEMO_STCP_VISITOR_BIN) $(DEMO_STCP_LOCAL_CLIENT_BIN)
+$(DEMO_STCP_STRESS_BIN): $(DEMO_STCP_DIR)/stress_test.c $(DEMO_STCP_COMMON_OBJ) $(FRPC_LIB) $(CRYPTO_LIB) $(YAMUX_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(DEMO_STCP_CFLAGS) -o $@ $(DEMO_STCP_DIR)/stress_test.c $(DEMO_STCP_COMMON_OBJ) $(FRPC_LIB) $(CRYPTO_LIB) $(YAMUX_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) -pthread $(LDFLAGS)
+
+demo-stcp: all $(DEMO_STCP_FRPS_BIN) $(DEMO_STCP_SERVER_BIN) $(DEMO_STCP_VISITOR_BIN) $(DEMO_STCP_LOCAL_CLIENT_BIN) $(DEMO_STCP_STRESS_BIN)
 
 # Best-effort run helper (localhost only).
 demo-stcp-run: demo-stcp
@@ -409,6 +418,56 @@ demo-stcp-run: demo-stcp
 		i=$$((i+1)); \
 	done; \
 	echo "Logs: $(BUILD_DIR)/demo_stcp_frps.log (server logs: $(BUILD_DIR)/demo_stcp_server_*.log)"
+
+# Stress test with mock frps (shows packet details)
+demo-stcp-stress: demo-stcp
+	@echo "=== STCP Stress Test (duration=$(DEMO_STCP_STRESS_DURATION)s) ==="
+	@echo "Starting mock frps..."
+	@$(DEMO_STCP_FRPS_BIN) --listen-addr 127.0.0.1 --listen-port 17001 --run-id stress_run > $(BUILD_DIR)/stress_frps.log 2>&1 &
+	@FRPS_PID=$$!; \
+	sleep 0.3; \
+	echo "Starting stress server..."; \
+	$(DEMO_STCP_STRESS_BIN) --mode server --frps-addr 127.0.0.1 --frps-port 17001 \
+		--data-addr 127.0.0.1 --data-port 19001 --proxy-name stress_stcp --sk stress_secret \
+		--duration $(DEMO_STCP_STRESS_DURATION) -vvv > $(BUILD_DIR)/stress_server.log 2>&1 & \
+	SERVER_PID=$$!; \
+	sleep 0.5; \
+	echo "Starting stress visitor..."; \
+	$(DEMO_STCP_STRESS_BIN) --mode visitor --frps-addr 127.0.0.1 --frps-port 17001 \
+		--data-addr 127.0.0.1 --data-port 19001 --proxy-name stress_stcp --sk stress_secret \
+		--duration $(DEMO_STCP_STRESS_DURATION) --interval 100 --min-payload 64 --max-payload 1024 -vvv 2>&1 | tee $(BUILD_DIR)/stress_visitor.log; \
+	kill $$SERVER_PID 2>/dev/null || true; \
+	kill $$FRPS_PID 2>/dev/null || true; \
+	echo ""; \
+	echo "=== Stress test complete ==="; \
+	echo "Logs:"; \
+	echo "  - $(BUILD_DIR)/stress_frps.log"; \
+	echo "  - $(BUILD_DIR)/stress_server.log"; \
+	echo "  - $(BUILD_DIR)/stress_visitor.log"
+
+# Interactive stress test (run manually in separate terminals)
+demo-stcp-stress-interactive: demo-stcp
+	@echo "=== STCP Interactive Stress Test ==="
+	@echo ""
+	@echo "Run these commands in separate terminals:"
+	@echo ""
+	@echo "Terminal 1 (Mock FRPS):"
+	@echo "  $(DEMO_STCP_FRPS_BIN) --listen-port 17001"
+	@echo ""
+	@echo "Terminal 2 (Stress Server):"
+	@echo "  $(DEMO_STCP_STRESS_BIN) --mode server --frps-port 17001 --data-port 19001 -vvv"
+	@echo ""
+	@echo "Terminal 3 (Stress Visitor):"
+	@echo "  $(DEMO_STCP_STRESS_BIN) --mode visitor --frps-port 17001 --data-port 19001 --duration 60 -vvv"
+	@echo ""
+	@echo "Options:"
+	@echo "  -v     : Show connection info"
+	@echo "  -vv    : Show message info"
+	@echo "  -vvv   : Show all packets (Yamux frames, etc)"
+	@echo "  --duration N    : Test duration in seconds"
+	@echo "  --interval N    : Message interval in ms"
+	@echo "  --min-payload N : Minimum payload size"
+	@echo "  --max-payload N : Maximum payload size"
 
 # ------------------------
 # Coverage (line coverage >=80%)
@@ -446,5 +505,5 @@ coverage: clean
 	bindings-shared rust-e2e-test bindings-test test-bindings \
 	frps-build python-e2e-test nodejs-e2e-test e2e-test e2e \
 	python-e2e-frps e2e-frps \
-	demo-stcp demo-stcp-run demo \
+	demo-stcp demo-stcp-run demo demo-stcp-stress demo-stcp-stress-interactive stress \
 	help
