@@ -156,6 +156,7 @@ extern "C" {
     fn frpc_is_connected(handle: *mut c_void) -> bool;
     fn frpc_is_tunnel_active(tunnel: *mut c_void) -> bool;
     fn frpc_tunnel_inject_yamux_frame(tunnel: *mut c_void, data: *const u8, len: size_t) -> c_int;
+    fn frpc_set_encryption(handle: *mut c_void, enabled: bool);
 }
 
 // C callback types
@@ -354,6 +355,12 @@ impl FrpcClient {
             event_thread: None,
             running: Arc::new(Mutex::new(false)),
         })
+    }
+
+    /// Set whether to use encryption after login (default: true)
+    /// Set to false when connecting to a mock server that doesn't support encryption.
+    pub fn set_encryption(&self, enabled: bool) {
+        unsafe { frpc_set_encryption(self.handle, enabled) };
     }
     
     /// Connect to the FRP server
@@ -664,25 +671,19 @@ mod tests {
     }
 
     // Start a minimal mock FRPS: handles Login/LoginResp only (1-byte type + 8-byte length + JSON).
-    fn start_mock_frps(resp_type: u8, resp_json: &'static str) -> (u16, thread::JoinHandle<()>) {
-        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind");
-        let port = listener.local_addr().unwrap().port();
-        let h = thread::spawn(move || {
-            if let Ok((mut s, _)) = listener.accept() {
-                // Read Login
-                let mut hdr = [0u8; 9];
-                if s.read_exact(&mut hdr).is_err() {
-                    return;
-                }
-                let len = i64::from_be_bytes(hdr[1..9].try_into().unwrap());
-                if len < 0 || len > 1024 * 1024 {
-                    return;
-                }
-                let mut payload = vec![0u8; len as usize];
-                if len > 0 {
-                    let _ = s.read_exact(&mut payload);
-                }
-                // Write LoginResp
+    fn handle_connection(mut s: std::net::TcpStream, resp_type: u8, resp_json: String) {
+        loop {
+            let mut hdr = [0u8; 9];
+            if s.read_exact(&mut hdr).is_err() { break; }
+            let msg_type = hdr[0];
+            let len = i64::from_be_bytes(hdr[1..9].try_into().unwrap());
+            if len < 0 || len > 1024 * 1024 { break; }
+            let mut payload = vec![0u8; len as usize];
+            if len > 0 {
+                let _ = s.read_exact(&mut payload);
+            }
+
+            if msg_type == b'o' { // Login
                 let body = resp_json.as_bytes();
                 let mut out = Vec::with_capacity(1 + 8 + body.len());
                 out.push(resp_type);
@@ -690,17 +691,47 @@ mod tests {
                 out.extend_from_slice(body);
                 let _ = s.write_all(&out);
                 let _ = s.flush();
+            } else if msg_type == b'v' { // NewVisitorConn
+                let body = b"{}";
+                let mut out = Vec::with_capacity(1 + 8 + body.len());
+                out.push(b'3'); 
+                out.extend_from_slice(&(body.len() as i64).to_be_bytes());
+                out.extend_from_slice(body);
+                let _ = s.write_all(&out);
+                let _ = s.flush();
+            }
+        }
+    }
+
+    fn start_mock_frps(resp_type: u8, resp_json: &'static str) -> u16 {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind");
+        let port = listener.local_addr().unwrap().port();
+        
+        let resp_json_str = resp_json.to_string();
+        
+        thread::spawn(move || {
+            for stream in listener.incoming() {
+                match stream {
+                    Ok(s) => {
+                        let rt = resp_type;
+                        let rj = resp_json_str.clone();
+                        thread::spawn(move || handle_connection(s, rt, rj));
+                    }
+                    Err(_) => break,
+                }
             }
         });
-        (port, h)
+        port
     }
 
     #[test]
     fn test_connect_and_inject_yamux_frame() {
         // Positive: connect success + start visitor tunnel + inject Yamux DATA -> on_data
-        let (port, jh) = start_mock_frps(b'1', "{\"version\":\"0.62.1\",\"run_id\":\"rs_test\"}");
+        let port = start_mock_frps(b'1', "{\"version\":\"0.62.1\",\"run_id\":\"rs_test\"}");
 
         let mut client = FrpcClient::new("127.0.0.1", port, Some("test_token")).unwrap();
+        // Mock FRPS does not support encryption
+        client.set_encryption(false);
         client.connect().unwrap();
 
         let handler = Arc::new(TestHandler {
@@ -743,27 +774,26 @@ mod tests {
         assert!(st.bytes_received > 0);
 
         let _ = client.disconnect();
-        let _ = jh.join();
     }
 
     #[test]
     fn test_connect_proto_errors() {
         // Wrong response type -> PROTO
         {
-            let (port, jh) = start_mock_frps(b'X', "{\"version\":\"0.62.1\",\"run_id\":\"rs_test\"}");
+            let port = start_mock_frps(b'X', "{\"version\":\"0.62.1\",\"run_id\":\"rs_test\"}");
             let mut client = FrpcClient::new("127.0.0.1", port, Some("test_token")).unwrap();
+            client.set_encryption(false);
             let r = client.connect();
             assert!(r.is_err());
-            let _ = jh.join();
         }
 
         // Missing run_id -> PROTO
         {
-            let (port, jh) = start_mock_frps(b'1', "{\"version\":\"0.62.1\"}");
+            let port = start_mock_frps(b'1', "{\"version\":\"0.62.1\"}");
             let mut client = FrpcClient::new("127.0.0.1", port, Some("test_token")).unwrap();
+            client.set_encryption(false);
             let r = client.connect();
             assert!(r.is_err());
-            let _ = jh.join();
         }
     }
 }
