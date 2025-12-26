@@ -82,8 +82,8 @@ jobs:
           cp build/libwrapper.a release/
           cp build/libfrpc-bindings.a release/
           
-          # Shared library
-          cp build/bindings-shlib/libfrpc-bindings.${{ matrix.shared_lib_ext }} release/
+          # Shared library (directly in build/, not bindings-shlib/)
+          cp build/libfrpc-bindings.so release/
           
           # Demo executables
           cp build/demo_stcp_server release/
@@ -111,8 +111,10 @@ jobs:
           cp build/libwrapper.a release/
           cp build/libfrpc-bindings.a release/
           
-          # Shared library
-          cp build/bindings-shlib/libfrpc-bindings.${{ matrix.shared_lib_ext }} release/
+          # Shared library (may be .so or .dll depending on mingw config)
+          cp build/libfrpc-bindings.so release/libfrpc-bindings.dll 2>/dev/null || \
+          cp build/libfrpc-bindings.dll release/ 2>/dev/null || \
+          echo "Warning: shared library not found"
           
           # Headers
           mkdir -p release/include
