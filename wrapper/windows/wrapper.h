@@ -23,12 +23,18 @@
 #define WRAPPED_EINTR      WSAEINTR
 #define WRAPPED_ETIMEDOUT  WSAETIMEDOUT
 #define WRAPPED_ECONNRESET WSAECONNRESET
+#define WRAPPED_EAGAIN     WSAEWOULDBLOCK
+#define WRAPPED_EWOULDBLOCK WSAEWOULDBLOCK
 
 /* Type definitions for compatibility */
 typedef int socklen_t;
 #ifndef ssize_t
 typedef SSIZE_T ssize_t;
 #endif
+
+/* Portable time types */
+typedef struct timeval wrapped_timeval_t;
+typedef time_t wrapped_time_t;
 
 /* Socket operations */
 int wrapped_socket(int domain, int type, int protocol);
@@ -49,10 +55,10 @@ int wrapped_fcntl(SOCKET fd, int cmd, ...);
 
 /* I/O multiplexing */
 int wrapped_select(int nfds, fd_set *readfds, fd_set *writefds,
-                   fd_set *exceptfds, struct timeval *timeout);
+                   fd_set *exceptfds, wrapped_timeval_t *timeout);
 
 /* Time operations */
-time_t wrapped_time(time_t *tloc);
+wrapped_time_t wrapped_time(wrapped_time_t *tloc);
 uint64_t wrapped_get_time_ms(void);
 void wrapped_usleep(unsigned int usec);
 

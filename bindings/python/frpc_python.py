@@ -202,6 +202,9 @@ _lib.frpc_send_data.restype = c_int
 _lib.frpc_process_events.argtypes = [c_void_p]
 _lib.frpc_process_events.restype = c_int
 
+_lib.frpc_tunnel_tick.argtypes = [c_void_p]
+_lib.frpc_tunnel_tick.restype = c_int
+
 _lib.frpc_get_tunnel_stats.argtypes = [c_void_p, POINTER(TunnelStats)]
 _lib.frpc_get_tunnel_stats.restype = c_int
 
@@ -308,6 +311,12 @@ class FRPCClient:
         while self._running and self._handle:
             try:
                 _lib.frpc_process_events(self._handle)
+                
+                # Also tick all tunnels to process ReqWorkConn and data
+                for tunnel in self._tunnels.values():
+                    if tunnel._handle:
+                        _lib.frpc_tunnel_tick(tunnel._handle)
+                
                 time.sleep(0.01)  # 10ms polling interval
             except Exception as e:
                 print(f"Event loop error: {e}")

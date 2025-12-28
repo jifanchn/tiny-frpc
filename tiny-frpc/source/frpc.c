@@ -80,8 +80,8 @@ static int frpc_wait_readable(int fd, int timeout_ms) {
     FD_ZERO(&rfds);
     FD_SET(fd, &rfds);
 
-    struct timeval tv;
-    struct timeval* ptv = NULL;
+    wrapped_timeval_t tv;
+    wrapped_timeval_t* ptv = NULL;
     if (timeout_ms >= 0) {
         tv.tv_sec = timeout_ms / 1000;
         tv.tv_usec = (timeout_ms % 1000) * 1000;
@@ -853,6 +853,32 @@ uint16_t frpc_client_get_server_port(frpc_client_t* client) {
         return 0;
     }
     return client->config.server_port;
+}
+
+// Get client token
+const char* frpc_client_get_token(frpc_client_t* client) {
+    if (!client) {
+        return NULL;
+    }
+    return client->config.token;
+}
+
+// Check if there is data available on control connection (non-blocking)
+bool frpc_client_has_data(frpc_client_t* client) {
+    if (!client || client->socket_fd < 0 || !client->is_connected) {
+        return false;
+    }
+    
+    fd_set rfds;
+    FD_ZERO(&rfds);
+    FD_SET(client->socket_fd, &rfds);
+    
+    wrapped_timeval_t tv;
+    tv.tv_sec = 0;
+    tv.tv_usec = 0;  // Non-blocking
+    
+    int ret = wrapped_select(client->socket_fd + 1, &rfds, NULL, NULL, &tv);
+    return (ret > 0);
 }
 
 // Dial a new TCP connection to the FRP server

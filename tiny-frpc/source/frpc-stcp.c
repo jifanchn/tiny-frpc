@@ -5,7 +5,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 
 // Quiet by default; set TINY_FRPC_VERBOSE=1 to enable extra debug logs.
 static int frpc_stcp_verbose_enabled(void) {
@@ -42,9 +41,11 @@ struct frpc_stcp_proxy {
     bool is_connected;
     bool is_registered;    // server role: whether it has been registered to frps
     
-    // Visitor connection fd (new connection for NewVisitorConn)
-    int visitor_fd;
+    // Connection file descriptors
+    int visitor_fd;        // Visitor: connection to FRPS for data transfer
+    int work_conn_fd;      // Server: work connection fd for data transfer with visitor
 };
+
 
 // Create an STCP proxy
 frpc_stcp_proxy_t* frpc_stcp_proxy_new(frpc_client_t* client, 
@@ -65,7 +66,8 @@ frpc_stcp_proxy_t* frpc_stcp_proxy_new(frpc_client_t* client,
     proxy->config = *config;
     proxy->client = client;
     proxy->user_ctx = user_ctx;
-    proxy->visitor_fd = -1;  // Initialize as invalid
+    proxy->visitor_fd = -1;    // Initialize as invalid
+    proxy->work_conn_fd = -1;  // Initialize as invalid
     
     // Duplicate string fields
     proxy->config.proxy_name = strdup(config->proxy_name);
@@ -553,9 +555,7 @@ int frpc_stcp_visitor_connect(frpc_stcp_proxy_t* proxy) {
     fprintf(stdout, "Visitor dialed new connection to frps, fd=%d\n", visitor_fd);
     
     // 3) Build NewVisitorConn message
-    time_t current_time;
-    time(&current_time);
-    int64_t timestamp = (int64_t)current_time;
+    int64_t timestamp = (int64_t)wrapped_time(NULL);
     
     char sign_key[33] = {0};
     if (stcp_get_sign_key(proxy->config.sk, timestamp, sign_key) != 0) {
@@ -642,43 +642,62 @@ int frpc_stcp_visitor_connect(frpc_stcp_proxy_t* proxy) {
     fprintf(stdout, "NewVisitorConnResp received successfully\n");
     free(resp_json);
     
-    // 4) Initialize Yamux client session
-    if (!proxy->yamux_session) {
-        proxy->yamux_session = init_yamux_session(proxy, true);
+    // For tcpMux=false mode, we use direct TCP without Yamux
+    // The visitor_fd is already set up for data transfer
+    // Note: In tcpMux=true mode, we would initialize Yamux here
+    
+    // Check if client uses yamux (tcpMux)
+    // For now, we assume tcpMux=false (no yamux) when use_encryption is set
+    // This is a simplification - proper implementation would check client config
+    bool use_yamux = false;  // TODO: Get from client config when tcpMux support is added
+    
+    if (use_yamux) {
+        // Initialize Yamux client session
         if (!proxy->yamux_session) {
-            fprintf(stderr, "Error: Failed to initialize yamux client session\n");
+            proxy->yamux_session = init_yamux_session(proxy, true);
+            if (!proxy->yamux_session) {
+                fprintf(stderr, "Error: Failed to initialize yamux client session\n");
+                return FRPC_ERROR_INTERNAL;
+            }
+        }
+        
+        // Open a stream for data transport
+        void* p_stream_user_data = proxy;
+        uint32_t stream_id = yamux_session_open_stream(proxy->yamux_session, &p_stream_user_data);
+        if (stream_id == 0) {
+            fprintf(stderr, "Error: Failed to open yamux stream for proxy '%s'\n", proxy->config.proxy_name);
             return FRPC_ERROR_INTERNAL;
         }
-    }
-    
-    // 5) Open a stream for data transport
-    void* p_stream_user_data = proxy; // Associate this proxy instance with the stream
-    uint32_t stream_id = yamux_session_open_stream(proxy->yamux_session, &p_stream_user_data);
-    if (stream_id == 0) {
-        fprintf(stderr, "Error: Failed to open yamux stream for proxy '%s'\n", proxy->config.proxy_name);
-        return FRPC_ERROR_INTERNAL;
-    }
-    
-    proxy->active_stream_id = stream_id;
-    fprintf(stdout, "STCP Visitor Proxy '%s': Opened stream ID %u for data communication. Waiting for establishment.\n", 
-            proxy->config.proxy_name, stream_id);
-
-    // TEMPORARY: Move is_connected and on_connection call back here for consistent state with Go logs
-    // This is NOT the correct place long-term, as stream is not yet truly established.
-    // This is to make the 'is_connected' flag source clear while debugging stream_user_data.
-    if (!proxy->is_connected) { // Should usually be false here unless called multiple times
-        proxy->is_connected = true; 
-        if (frpc_stcp_verbose_enabled()) {
-            fprintf(stdout, "STCP Visitor Proxy '%s': (TEMPORARY) Marking as connected and calling on_connection after opening stream %u.\n",
-                    proxy->config.proxy_name, stream_id);
+        
+        proxy->active_stream_id = stream_id;
+        fprintf(stdout, "STCP Visitor Proxy '%s': Opened stream ID %u for data communication. Waiting for establishment.\n", 
+                proxy->config.proxy_name, stream_id);
+                
+        if (!proxy->is_connected) {
+            proxy->is_connected = true; 
+            if (frpc_stcp_verbose_enabled()) {
+                fprintf(stdout, "STCP Visitor Proxy '%s': Marking as connected after opening stream %u.\n",
+                        proxy->config.proxy_name, stream_id);
+            }
+            if (proxy->config.on_connection) {
+                proxy->config.on_connection(proxy->user_ctx, 1, 0);
+            }
         }
+    } else {
+        // Direct TCP mode (tcpMux=false)
+        // visitor_fd is already connected and ready for data transfer
+        fprintf(stdout, "STCP Visitor '%s': Connected and ready for data transfer on fd=%d (direct TCP mode)\n",
+                proxy->config.proxy_name, proxy->visitor_fd);
+        
+        proxy->is_connected = true;
         if (proxy->config.on_connection) {
-            proxy->config.on_connection(proxy->user_ctx, 1, 0);  // 1 = connected, 0 = no error
+            proxy->config.on_connection(proxy->user_ctx, 1, 0);
         }
     }
         
     return FRPC_SUCCESS;
 }
+
 
 // Disconnect from server
 int frpc_stcp_visitor_disconnect(frpc_stcp_proxy_t* proxy) {
@@ -917,8 +936,8 @@ int frpc_stcp_send(frpc_stcp_proxy_t* proxy, const uint8_t* data, size_t len) {
         fflush(stderr);
     }
 
-    uint64_t current_ts_ms = tools_get_time_ms(); // USE tools_get_time_ms
-    int final_ret = FRPC_ERROR_INTERNAL; // Initialize final return value
+    uint64_t current_ts_ms = tools_get_time_ms();
+    int final_ret = FRPC_ERROR_INTERNAL;
 
     if (!proxy || !data) {
         final_ret = FRPC_ERROR_INVALID_PARAM;
@@ -946,6 +965,16 @@ int frpc_stcp_send(frpc_stcp_proxy_t* proxy, const uint8_t* data, size_t len) {
         return final_ret;
     }
     
+    // Non-Yamux mode: send directly on visitor_fd (for visitor) or work_conn_fd (for server)
+    // This is used when tcpMux=false
+    int direct_fd = -1;
+    if (proxy->config.role == FRPC_STCP_ROLE_VISITOR && proxy->visitor_fd >= 0) {
+        direct_fd = proxy->visitor_fd;
+    } else if (proxy->config.role == FRPC_STCP_ROLE_SERVER && proxy->work_conn_fd >= 0) {
+        direct_fd = proxy->work_conn_fd;
+    }
+    
+    // If Yamux session exists and has active stream, use Yamux
     if (proxy->yamux_session && proxy->active_stream_id != 0) {
         if (frpc_stcp_verbose_enabled()) {
             fprintf(stdout, "[%llu] STCP Proxy '%s': Sending %zu bytes via Yamux stream %u\n",
@@ -973,19 +1002,59 @@ int frpc_stcp_send(frpc_stcp_proxy_t* proxy, const uint8_t* data, size_t len) {
             }
             final_ret = ret; 
         }
+    } else if (direct_fd >= 0) {
+        // Direct TCP send (non-Yamux mode)
+        if (frpc_stcp_verbose_enabled()) {
+            fprintf(stdout, "[%llu] STCP Proxy '%s': Sending %zu bytes directly on fd=%d\n",
+                    (unsigned long long)current_ts_ms, proxy->config.proxy_name, len, direct_fd);
+        }
+        
+        size_t total_sent = 0;
+        while (total_sent < len) {
+            ssize_t sent = wrapped_write(direct_fd, data + total_sent, len - total_sent);
+            if (sent < 0) {
+                int err = wrapped_get_errno();
+                if (err == WRAPPED_EINTR) {
+                    continue;
+                }
+                fprintf(stderr, "[%llu] Error: Failed to write to fd=%d for proxy '%s', errno=%d\n",
+                        (unsigned long long)current_ts_ms, direct_fd, proxy->config.proxy_name, err);
+                final_ret = FRPC_ERROR_NETWORK;
+                break;
+            }
+            if (sent == 0) {
+                fprintf(stderr, "[%llu] Error: Connection closed while writing to fd=%d for proxy '%s'\n",
+                        (unsigned long long)current_ts_ms, direct_fd, proxy->config.proxy_name);
+                final_ret = FRPC_ERROR_CONNECTION_CLOSED;
+                break;
+            }
+            total_sent += (size_t)sent;
+        }
+        
+        if (total_sent == len) {
+            if (frpc_stcp_verbose_enabled()) {
+                fprintf(stdout, "[%llu] STCP Proxy '%s': Successfully sent %zu bytes directly on fd=%d\n",
+                        (unsigned long long)current_ts_ms, proxy->config.proxy_name, total_sent, direct_fd);
+            }
+            final_ret = (int)total_sent;
+        }
     } else {
         if (frpc_stcp_verbose_enabled()) {
-            fprintf(stderr, "[%llu] Error: No active yamux stream for STCP proxy '%s' (session: %p, stream_id: %u)\n",
-                    (unsigned long long)current_ts_ms, proxy->config.proxy_name, (void*)proxy->yamux_session, proxy->active_stream_id);
+            fprintf(stderr, "[%llu] Error: No active connection for STCP proxy '%s' (yamux: %p, stream_id: %u, visitor_fd: %d, work_conn_fd: %d)\n",
+                    (unsigned long long)current_ts_ms, proxy->config.proxy_name, 
+                    (void*)proxy->yamux_session, proxy->active_stream_id,
+                    proxy->visitor_fd, proxy->work_conn_fd);
         }
         final_ret = FRPC_ERROR_INTERNAL;
     }
+    
     if (frpc_stcp_verbose_enabled()) {
         fprintf(stdout, "[%llu] Exit frpc_stcp_send for proxy '%s' with result: %d\n",
                 (unsigned long long)current_ts_ms, proxy->config.proxy_name, final_ret);
     }
     return final_ret;
 }
+
 
 // Handle received data
 int frpc_stcp_receive(frpc_stcp_proxy_t* proxy, const uint8_t* data, size_t len) {
@@ -1036,6 +1105,271 @@ int frpc_stcp_receive(frpc_stcp_proxy_t* proxy, const uint8_t* data, size_t len)
     return FRPC_SUCCESS;
 }
 
+// Forward declaration
+static int frpc_stcp_handle_req_work_conn(frpc_stcp_proxy_t* proxy);
+static int frpc_stcp_poll_work_conn(frpc_stcp_proxy_t* proxy);
+
+// Handle ReqWorkConn: create new connection to FRPS and send NewWorkConn
+static int frpc_stcp_handle_req_work_conn(frpc_stcp_proxy_t* proxy) {
+    if (!proxy || !proxy->client) {
+        return FRPC_ERROR_INVALID_PARAM;
+    }
+    
+    if (frpc_stcp_verbose_enabled()) {
+        fprintf(stdout, "[SERVER] Handling ReqWorkConn for proxy '%s'\n", proxy->config.proxy_name);
+    }
+    
+    // If we already have an active work connection, ignore new ReqWorkConn
+    // FRPS sends multiple ReqWorkConn to build connection pool, but we only need one
+    if (proxy->work_conn_fd >= 0 && proxy->is_connected) {
+        if (frpc_stcp_verbose_enabled()) {
+            fprintf(stdout, "[SERVER] Already have work connection fd=%d, ignoring ReqWorkConn\n", proxy->work_conn_fd);
+        }
+        return FRPC_SUCCESS;
+    }
+    
+    // Close any stale work connection
+    if (proxy->work_conn_fd >= 0) {
+        if (frpc_stcp_verbose_enabled()) {
+            fprintf(stdout, "[SERVER] Closing stale work connection fd=%d\n", proxy->work_conn_fd);
+        }
+        wrapped_close(proxy->work_conn_fd);
+        proxy->work_conn_fd = -1;
+    }
+
+    
+    // 1. Dial new connection to FRPS
+    int fd = frpc_dial_server(proxy->client);
+    if (fd < 0) {
+        fprintf(stderr, "[SERVER] Failed to dial FRPS for work connection\n");
+        return FRPC_ERROR_NETWORK;
+    }
+    
+    if (frpc_stcp_verbose_enabled()) {
+        fprintf(stdout, "[SERVER] Dialed new work connection to FRPS, fd=%d\n", fd);
+    }
+    
+    // 2. Build NewWorkConn message
+    // Format: {"run_id":"xxx","privilege_key":"xxx","timestamp":xxx}
+    const char* run_id = frpc_client_get_run_id(proxy->client);
+    if (!run_id || run_id[0] == '\0') {
+        fprintf(stderr, "[SERVER] No run_id available for NewWorkConn\n");
+        wrapped_close(fd);
+        return FRPC_ERROR_INTERNAL;
+    }
+    
+    int64_t ts = (int64_t)wrapped_time(NULL);
+    char privilege_key[33] = {0};
+    const char* token = frpc_client_get_token(proxy->client);
+    const char* token_str = (token && token[0] != '\0') ? token : "";
+    
+    if (tools_get_auth_key(token_str, ts, privilege_key) != 0) {
+        fprintf(stderr, "[SERVER] Failed to compute privilege_key for NewWorkConn\n");
+        wrapped_close(fd);
+        return FRPC_ERROR_INTERNAL;
+    }
+    
+    char new_work_conn_json[512];
+    int msg_len = snprintf(new_work_conn_json, sizeof(new_work_conn_json),
+        "{\"run_id\":\"%s\",\"privilege_key\":\"%s\",\"timestamp\":%lld}",
+        run_id, privilege_key, (long long)ts);
+    
+    if (msg_len <= 0 || (size_t)msg_len >= sizeof(new_work_conn_json)) {
+        fprintf(stderr, "[SERVER] NewWorkConn message too long\n");
+        wrapped_close(fd);
+        return FRPC_ERROR_INTERNAL;
+    }
+    
+    if (frpc_stcp_verbose_enabled()) {
+        fprintf(stdout, "[SERVER] Sending NewWorkConn: %s\n", new_work_conn_json);
+    }
+    
+    // 3. Send NewWorkConn message (type='w')
+    // Note: This is a NEW connection, not encrypted yet
+    int ret = frpc_send_msg_on_fd(fd, (uint8_t)'w', new_work_conn_json, (size_t)msg_len);
+    if (ret != FRPC_SUCCESS) {
+        fprintf(stderr, "[SERVER] Failed to send NewWorkConn message\n");
+        wrapped_close(fd);
+        return ret;
+    }
+    
+    // 4. Read StartWorkConn response (type='s')
+    uint8_t resp_type = 0;
+    char* resp_json = NULL;
+    size_t resp_len = 0;
+    ret = frpc_read_msg_from_fd(fd, &resp_type, &resp_json, &resp_len, 10000);
+    if (ret != FRPC_SUCCESS) {
+        fprintf(stderr, "[SERVER] Failed to read StartWorkConn response (error=%d)\n", ret);
+        wrapped_close(fd);
+        return ret;
+    }
+    
+    if (resp_type != (uint8_t)'s') {
+        fprintf(stderr, "[SERVER] Unexpected response type '%c', expected 's'\n", (char)resp_type);
+        free(resp_json);
+        wrapped_close(fd);
+        return FRPC_ERROR_PROTO;
+    }
+    
+    if (frpc_stcp_verbose_enabled()) {
+        fprintf(stdout, "[SERVER] Received StartWorkConn: %s\n", resp_json ? resp_json : "{}");
+    }
+    
+    // Check for error in response
+    if (resp_json && strstr(resp_json, "\"error\":\"") != NULL) {
+        char* err_start = strstr(resp_json, "\"error\":\"") + 9;
+        char* err_end = strchr(err_start, '"');
+        if (err_end && err_end > err_start) {
+            size_t err_len = (size_t)(err_end - err_start);
+            if (err_len > 0) {
+                fprintf(stderr, "[SERVER] StartWorkConn error: %.*s\n", (int)err_len, err_start);
+                free(resp_json);
+                wrapped_close(fd);
+                return FRPC_ERROR_PROTO;
+            }
+        }
+    }
+    
+    free(resp_json);
+    
+    // 5. Store work connection fd
+    proxy->work_conn_fd = fd;
+    proxy->is_connected = true;
+    
+    // Notify connection established
+    if (proxy->config.on_connection) {
+        proxy->config.on_connection(proxy->user_ctx, 1, 0);
+    }
+    
+    fprintf(stdout, "[SERVER] Work connection established for proxy '%s' on fd=%d\n", 
+            proxy->config.proxy_name, fd);
+    
+    return FRPC_SUCCESS;
+}
+
+// Poll work connection for incoming data
+static int frpc_stcp_poll_work_conn(frpc_stcp_proxy_t* proxy) {
+    if (!proxy || proxy->work_conn_fd < 0) {
+        return FRPC_SUCCESS;
+    }
+    
+    // Check if data is available (non-blocking)
+    fd_set rfds;
+    FD_ZERO(&rfds);
+    FD_SET(proxy->work_conn_fd, &rfds);
+    
+    wrapped_timeval_t tv;
+    tv.tv_sec = 0;
+    tv.tv_usec = 0;  // Non-blocking check
+    
+    int sel = wrapped_select(proxy->work_conn_fd + 1, &rfds, NULL, NULL, &tv);
+    if (sel < 0) {
+        if (wrapped_get_errno() == WRAPPED_EINTR) {
+            return FRPC_SUCCESS;
+        }
+        return FRPC_ERROR_NETWORK;
+    }
+    
+    if (sel == 0) {
+        return FRPC_SUCCESS;  // No data available
+    }
+    
+    // Read available data
+    uint8_t buffer[4096];
+    ssize_t n = wrapped_read(proxy->work_conn_fd, buffer, sizeof(buffer));
+    if (n < 0) {
+        if (wrapped_get_errno() == WRAPPED_EINTR || wrapped_get_errno() == WRAPPED_EAGAIN) {
+            return FRPC_SUCCESS;
+        }
+        if (frpc_stcp_verbose_enabled()) {
+            fprintf(stderr, "[SERVER] Work connection read error\n");
+        }
+        return FRPC_ERROR_NETWORK;
+    }
+    
+    if (n == 0) {
+        // Connection closed
+        if (frpc_stcp_verbose_enabled()) {
+            fprintf(stdout, "[SERVER] Work connection closed by remote\n");
+        }
+        wrapped_close(proxy->work_conn_fd);
+        proxy->work_conn_fd = -1;
+        proxy->is_connected = false;
+        
+        if (proxy->config.on_connection) {
+            proxy->config.on_connection(proxy->user_ctx, 0, FRPC_ERROR_CONNECTION_CLOSED_BY_REMOTE);
+        }
+        return FRPC_SUCCESS;
+    }
+    
+    // Deliver data to callback
+    if (frpc_stcp_verbose_enabled()) {
+        fprintf(stdout, "[SERVER] Received %zd bytes on work connection\n", n);
+    }
+    
+    if (proxy->config.on_data) {
+        proxy->config.on_data(proxy->user_ctx, buffer, (size_t)n);
+    }
+    
+    return FRPC_SUCCESS;
+}
+
+// Poll control connection for messages (ReqWorkConn, Pong, etc.)
+static int frpc_stcp_poll_control_conn(frpc_stcp_proxy_t* proxy) {
+    if (!proxy || !proxy->client) {
+        return FRPC_SUCCESS;
+    }
+    
+    // Only for server role - check for ReqWorkConn
+    if (proxy->config.role != FRPC_STCP_ROLE_SERVER || !proxy->is_registered) {
+        return FRPC_SUCCESS;
+    }
+    
+    // Check if data is available on control connection
+    if (!frpc_client_has_data(proxy->client)) {
+        return FRPC_SUCCESS;
+    }
+    
+    // Read message from control connection
+    uint8_t msg_type = 0;
+    char* msg_json = NULL;
+    size_t msg_len = 0;
+    
+    int ret = frpc_client_read_msg(proxy->client, &msg_type, &msg_json, &msg_len, 0);
+    if (ret != FRPC_SUCCESS) {
+        if (ret == FRPC_ERROR_TIMEOUT) {
+            return FRPC_SUCCESS;  // No message available, that's fine
+        }
+        return ret;
+    }
+    
+    if (frpc_stcp_verbose_enabled()) {
+        fprintf(stdout, "[SERVER] Received control message type='%c', len=%zu\n", (char)msg_type, msg_len);
+    }
+    
+    // Handle message based on type
+    switch (msg_type) {
+        case 'r':  // TypeReqWorkConn
+            free(msg_json);
+            return frpc_stcp_handle_req_work_conn(proxy);
+            
+        case '4':  // TypePong
+            if (frpc_stcp_verbose_enabled()) {
+                fprintf(stdout, "[SERVER] Received Pong\n");
+            }
+            break;
+            
+        default:
+            if (frpc_stcp_verbose_enabled()) {
+                fprintf(stdout, "[SERVER] Ignoring unknown message type '%c'\n", (char)msg_type);
+            }
+            break;
+    }
+    
+    free(msg_json);
+    return FRPC_SUCCESS;
+}
+
 // Handle periodic tasks
 int frpc_stcp_tick(frpc_stcp_proxy_t* proxy) {
     if (!proxy) return FRPC_ERROR_INVALID_PARAM;
@@ -1044,12 +1378,30 @@ int frpc_stcp_tick(frpc_stcp_proxy_t* proxy) {
         return FRPC_SUCCESS;
     }
     
-    // Handle FRP client periodic tasks
+    // Handle FRP client periodic tasks (heartbeat)
     if (proxy->client) {
         int ret = frpc_client_tick(proxy->client);
         if (ret != FRPC_SUCCESS) {
             if (frpc_stcp_verbose_enabled()) {
                 fprintf(stderr, "Warning: FRP client tick failed with code: %d\n", ret);
+            }
+        }
+    }
+    
+    // For server role: poll control connection for ReqWorkConn
+    if (proxy->config.role == FRPC_STCP_ROLE_SERVER && proxy->is_registered) {
+        int ret = frpc_stcp_poll_control_conn(proxy);
+        if (ret != FRPC_SUCCESS && ret != FRPC_ERROR_TIMEOUT) {
+            if (frpc_stcp_verbose_enabled()) {
+                fprintf(stderr, "Warning: Poll control connection failed: %d\n", ret);
+            }
+        }
+        
+        // Poll work connection for incoming data
+        ret = frpc_stcp_poll_work_conn(proxy);
+        if (ret != FRPC_SUCCESS) {
+            if (frpc_stcp_verbose_enabled()) {
+                fprintf(stderr, "Warning: Poll work connection failed: %d\n", ret);
             }
         }
     }
@@ -1065,11 +1417,6 @@ int frpc_stcp_tick(frpc_stcp_proxy_t* proxy) {
                         proxy->config.proxy_name, proxy->active_stream_id, proxy->is_connected);
             }
             
-            // If the STCP connection was considered active (is_connected = true) AND
-            // an active_stream_id was set, but on_stream_close_wrapper somehow wasn't triggered for it
-            // (or didn't clear is_connected), then we ensure notification happens.
-            // However, on_stream_close_wrapper *should* be called by yamux_session_free/close.
-            // This is more of a safeguard.
             if (proxy->is_connected && proxy->active_stream_id != 0) {
                  if (frpc_stcp_verbose_enabled()) {
                      fprintf(stdout, "Warning: Yamux session for proxy '%s' closed while STCP connection (stream %u) was still marked active. Forcing disconnect notification.\n",
@@ -1079,12 +1426,12 @@ int frpc_stcp_tick(frpc_stcp_proxy_t* proxy) {
                      proxy->config.on_connection(proxy->user_ctx, 0, FRPC_ERROR_CONNECTION_CLOSED);
                  }
             }
-            proxy->is_connected = false; // Ensure disconnected state
+            proxy->is_connected = false;
             
             // Free session
-            yamux_session_free(proxy->yamux_session); // This should trigger on_stream_close for any remaining streams
+            yamux_session_free(proxy->yamux_session);
             proxy->yamux_session = NULL;
-            proxy->active_stream_id = 0; // Ensure active_stream_id is cleared
+            proxy->active_stream_id = 0;
         }
     }
     

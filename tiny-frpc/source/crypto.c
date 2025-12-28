@@ -578,8 +578,8 @@ static int crypto_read_exact(int fd, uint8_t* buf, size_t len, int timeout_ms) {
         FD_ZERO(&rfds);
         FD_SET(fd, &rfds);
         
-        struct timeval tv;
-        struct timeval* ptv = NULL;
+        wrapped_timeval_t tv;
+        wrapped_timeval_t* ptv = NULL;
         if (timeout_ms >= 0) {
             tv.tv_sec = timeout_ms / 1000;
             tv.tv_usec = (timeout_ms % 1000) * 1000;
@@ -638,8 +638,8 @@ int frp_crypto_read(frp_crypto_stream_t* stream, int fd, uint8_t* buf, size_t le
     FD_ZERO(&rfds);
     FD_SET(fd, &rfds);
     
-    struct timeval tv;
-    struct timeval* ptv = NULL;
+    wrapped_timeval_t tv;
+    wrapped_timeval_t* ptv = NULL;
     if (timeout_ms >= 0) {
         tv.tv_sec = timeout_ms / 1000;
         tv.tv_usec = (timeout_ms % 1000) * 1000;

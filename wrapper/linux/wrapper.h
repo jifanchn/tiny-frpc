@@ -17,6 +17,8 @@
 #define WRAPPED_EINTR      EINTR
 #define WRAPPED_ETIMEDOUT  ETIMEDOUT
 #define WRAPPED_ECONNRESET ECONNRESET
+#define WRAPPED_EAGAIN     EAGAIN
+#define WRAPPED_EWOULDBLOCK EWOULDBLOCK
 
 // Socket operations
 int wrapped_socket(int domain, int type, int protocol);
@@ -31,11 +33,15 @@ int wrapped_setsockopt(int sockfd, int level, int optname, const void *optval, s
 int wrapped_fcntl(int fd, int cmd, ... /* arg */ );
 
 // I/O multiplexing
+// Portable timeval type - platform implementations define the actual type
+typedef struct timeval wrapped_timeval_t;
+typedef time_t wrapped_time_t;
+
 int wrapped_select(int nfds, fd_set *readfds, fd_set *writefds,
-                   fd_set *exceptfds, struct timeval *timeout);
+                   fd_set *exceptfds, wrapped_timeval_t *timeout);
 
 // Time operations
-time_t wrapped_time(time_t *tloc);
+wrapped_time_t wrapped_time(wrapped_time_t *tloc);
 void wrapped_usleep(unsigned int usec);
 uint64_t wrapped_get_time_ms(void);
 

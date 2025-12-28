@@ -212,6 +212,9 @@ int frpc_send_data(frpc_tunnel_handle_t tunnel, const uint8_t* data, size_t len)
 // Process events (call periodically)
 int frpc_process_events(frpc_handle_t handle);
 
+// Process tunnel events (call periodically for each active tunnel)
+int frpc_tunnel_tick(frpc_tunnel_handle_t tunnel);
+
 // Get tunnel statistics
 typedef struct {
     uint64_t bytes_sent;

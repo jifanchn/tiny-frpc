@@ -77,9 +77,15 @@ int frpc_client_read_msg(frpc_client_t* client, uint8_t* type_out, char** json_o
 // Get client run_id (assigned by frps after login)
 const char* frpc_client_get_run_id(frpc_client_t* client);
 
+// Get client token
+const char* frpc_client_get_token(frpc_client_t* client);
+
 // Get server address and port from client config
 const char* frpc_client_get_server_addr(frpc_client_t* client);
 uint16_t frpc_client_get_server_port(frpc_client_t* client);
+
+// Check if there is data available on the control connection (non-blocking)
+bool frpc_client_has_data(frpc_client_t* client);
 
 // Dial a new TCP connection to the FRP server (for visitor/work connections)
 // Returns file descriptor on success, negative error code on failure

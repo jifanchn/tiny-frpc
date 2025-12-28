@@ -670,6 +670,22 @@ int frpc_process_events(frpc_handle_t handle) {
     return ret;
 }
 
+int frpc_tunnel_tick(frpc_tunnel_handle_t tunnel) {
+    if (!tunnel) return -1;
+    
+    frpc_tunnel_wrapper_t* t = (frpc_tunnel_wrapper_t*)tunnel;
+    
+    if (!t->stcp_proxy) {
+        return -1;
+    }
+    
+    // Process tunnel events (handles ReqWorkConn for servers, polls work connection for data)
+    int ret = frpc_stcp_tick(t->stcp_proxy);
+    
+    return ret;
+}
+
+
 int frpc_get_tunnel_stats(frpc_tunnel_handle_t tunnel, frpc_tunnel_stats_t* stats) {
     if (!tunnel || !stats) return -1;
     

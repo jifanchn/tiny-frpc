@@ -135,6 +135,7 @@ help:
 	@echo "  make bindings-test  - Run bindings tests (Python + Node.js + Rust)"
 	@echo "  make e2e            - Run E2E tests with mock FRPS (Python + Node.js + Rust)"
 	@echo "  make e2e-frps       - Run E2E tests with real FRPS"
+	@echo "  make p3             - Run P3 (Three-Process) tests with real FRPS"
 	@echo "  make demo           - Run local STCP demo (best-effort, localhost only)"
 	@echo "  make stress         - Run STCP stress test (30s duration)"
 	@echo ""
@@ -516,6 +517,20 @@ coverage: clean
 	@python3 tests/coverage_check.py $(BUILD_DIR_COV)/coverage.info 80
 	@echo "Coverage OK (>=80%). Report: $(BUILD_DIR_COV)/coverage.info"
 
+# ------------------------
+# P3 (Three-Process) tests with real FRPS
+# ------------------------
+p3-python: bindings-shared frps-build
+	cd demo/p3/python && python3 -B test_p3.py
+
+p3-rust: bindings-shared frps-build
+	@echo "Rust P3 tests not yet implemented"
+
+p3-node: bindings-shared frps-build
+	@echo "Node.js P3 tests not yet implemented"
+
+p3: p3-python
+
 .PHONY: all install clean test c-test cmd-test \
 	tools-test wrapper-test config-test error-test bindings-api-test yamux-unit-test stcp-unit-test frpc-core-test crypto-test \
 	yamux-test frpc-test cmd-coverage coverage \
@@ -523,4 +538,5 @@ coverage: clean
 	frps-build python-e2e-test nodejs-e2e-test e2e-test e2e \
 	python-e2e-frps e2e-frps \
 	demo-stcp demo-stcp-run demo demo-stcp-stress demo-stcp-stress-multi demo-stcp-stress-interactive stress \
+	p3 p3-python p3-rust p3-node \
 	help
