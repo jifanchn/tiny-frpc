@@ -1,7 +1,7 @@
 package main
 
 /*
-#cgo LDFLAGS: -L../../build -lfrpc -lyamux -lcrypto -ltools -lwrapper
+#cgo LDFLAGS: -L../../build -lfrpc -lcrypto -ltools -lwrapper
 
 #include <stdlib.h>
 #include <string.h>
@@ -183,8 +183,8 @@ var frpsConfig = &v1.ServerConfig{
 	BindPort:              7001,
 	TCPMuxHTTPConnectPort: 0,
 	SubDomainHost:         "",
-	// Disable TCPMux first to keep the minimum FRP message exchange + STCP E2E loop stable.
-	// We can re-enable TCPMux later in deeper interop tests once Yamux alignment is fully proven.
+	// TCPMux (Yamux multiplexing) is not supported by this C implementation.
+	// Only Direct TCP mode is supported.
 	Transport: v1.ServerTransportConfig{
 		TCPMux: new(bool),
 	},
@@ -333,15 +333,12 @@ func onStcpData(user_ctx unsafe.Pointer, data *C.uchar, length C.size_t) C.int {
 	return C.int(length) // Indicates all data was processed
 }
 
-// onStcpWrite is a CGO callback for high-level write notifications (not Yamux transport).
+// onStcpWrite is a CGO callback for high-level write notifications.
 //
 //export onStcpWrite
 func onStcpWrite(user_ctx unsafe.Pointer, data *C.uchar, length C.size_t) C.int {
-	// This callback, as part of frpc_stcp_config_t, is likely for notifications
-	// or high-level writes, NOT for Yamux's direct transport.
-	// Yamux's write_fn should be a C function using the proxy's work_conn_fd.
-	// For now, just log.
-	// Do NOT use globalFrpcClient here for sending Yamux frames.
+	// This callback, as part of frpc_stcp_config_t, is for write notifications
+	// in Direct TCP mode. For now, just log.
 
 	proxyID := "unknown_proxy_on_write"
 	// user_ctx for onStcpWrite is the one passed to frpc_stcp_proxy_new.
@@ -350,14 +347,11 @@ func onStcpWrite(user_ctx unsafe.Pointer, data *C.uchar, length C.size_t) C.int 
 		proxyID = p
 	}
 
-	// goData := C.GoBytes(unsafe.Pointer(data), C.int(length)) // Avoid allocation if just logging length
 	// Default is quiet; print this noisy diagnostic only in verbose mode.
 	if verbose {
-		log.Printf("Go onStcpWrite: callback for proxy [%s] (user_ctx: %p) with %d bytes. This should NOT be Yamux's transport send.\n", proxyID, user_ctx, length)
+		log.Printf("Go onStcpWrite: callback for proxy [%s] (user_ctx: %p) with %d bytes.\n", proxyID, user_ctx, length)
 	}
 
-	// Simulating that the write was "accepted" by the C layer to be processed.
-	// The actual send for Yamux should happen via a C function configured in yamux_session_new.
 	return C.int(length) // Indicate all data "processed" by this callback.
 }
 

@@ -4,7 +4,7 @@
  * This program performs stress testing of the STCP protocol by:
  * 1. Running multiple rounds of visitor-server communication
  * 2. Sending variable-sized payloads
- * 3. Logging detailed packet information (Yamux frames, FRP messages)
+ * 3. Logging detailed packet information (FRP messages, raw data)
  * 4. Measuring throughput and latency
  *
  * Can work with both mock_frps and real frps.
@@ -14,7 +14,6 @@
 
 #include "frpc.h"
 #include "frpc-stcp.h"
-#include "yamux.h"
 
 #include <errno.h>
 #include <signal.h>
@@ -91,8 +90,6 @@ typedef struct stress_stats_s {
     uint64_t    messages_recv;
     uint64_t    bytes_sent;
     uint64_t    bytes_recv;
-    uint64_t    yamux_frames_in;
-    uint64_t    yamux_frames_out;
     uint64_t    frp_messages_in;
     uint64_t    frp_messages_out;
     uint64_t    latency_sum_us;
@@ -156,79 +153,10 @@ static void print_hex_dump(const char* prefix, const uint8_t* data, size_t len, 
     fprintf(stdout, "\n");
 }
 
-/* ---------- Yamux frame decoder (for logging) ---------- */
-static const char* yamux_type_str(uint8_t type) {
-    switch (type) {
-        case 0: return "Data";
-        case 1: return "WindowUpdate";
-        case 2: return "Ping";
-        case 3: return "GoAway";
-        default: return "Unknown";
-    }
-}
-
-static const char* yamux_flags_str(uint16_t flags, char* buf, size_t buf_len) {
-    buf[0] = '\0';
-    if (flags & 0x01) strncat(buf, "SYN ", buf_len - strlen(buf) - 1);
-    if (flags & 0x02) strncat(buf, "ACK ", buf_len - strlen(buf) - 1);
-    if (flags & 0x04) strncat(buf, "FIN ", buf_len - strlen(buf) - 1);
-    if (flags & 0x08) strncat(buf, "RST ", buf_len - strlen(buf) - 1);
-    if (buf[0] == '\0') strncpy(buf, "(none)", buf_len - 1);
-    return buf;
-}
-
-static void log_yamux_frame(stress_ctx_t* ctx, const char* direction, const uint8_t* data, size_t len) {
+/* ---------- Raw packet logger (for debugging) ---------- */
+static void log_raw_packet(stress_ctx_t* ctx, const char* direction, const uint8_t* data, size_t len) {
     if (ctx->config.verbose < 3) return;
-
-    // Yamux frame header is exactly 12 bytes
-    // The library may send header and payload separately, so we need to detect this
-    if (len < 12) {
-        // This is likely a partial frame or payload continuation
-        fprintf(stdout, "[YAMUX %s payload] %zu bytes: ", direction, len);
-        for (size_t i = 0; i < len && i < 16; i++) fprintf(stdout, "%02x ", data[i]);
-        if (len > 16) fprintf(stdout, "...");
-        fprintf(stdout, "\n");
-        return;
-    }
-
-    uint8_t version = data[0];
-    uint8_t type = data[1];
-    uint16_t flags = ((uint16_t)data[2] << 8) | data[3];
-    uint32_t stream_id = ((uint32_t)data[4] << 24) | ((uint32_t)data[5] << 16) |
-                         ((uint32_t)data[6] << 8) | data[7];
-    uint32_t length = ((uint32_t)data[8] << 24) | ((uint32_t)data[9] << 16) |
-                      ((uint32_t)data[10] << 8) | data[11];
-
-    // Sanity check: is this a valid Yamux frame header?
-    // - version must be 0
-    // - type must be 0-3
-    // - For Data frames (type=0), stream_id must be non-zero
-    // - Length should be reasonable (< 64KB for most cases)
-    int looks_like_header = 1;
-    if (version != 0) looks_like_header = 0;
-    if (type > 3) looks_like_header = 0;
-    if (type == 0 && stream_id == 0) looks_like_header = 0; // Data frame needs stream
-    if (length > 1024*1024) looks_like_header = 0; // Unreasonably large
-
-    if (!looks_like_header) {
-        // This is likely a payload chunk, not a frame header
-        fprintf(stdout, "[YAMUX %s payload] %zu bytes: ", direction, len);
-        for (size_t i = 0; i < len && i < 32; i++) fprintf(stdout, "%02x ", data[i]);
-        if (len > 32) fprintf(stdout, "...");
-        fprintf(stdout, "\n");
-        return;
-    }
-
-    char flags_buf[64];
-    fprintf(stdout, "[YAMUX %s] ver=%u type=%s flags=%s stream=%u len=%u\n",
-            direction, version, yamux_type_str(type),
-            yamux_flags_str(flags, flags_buf, sizeof(flags_buf)),
-            stream_id, length);
-
-    if (type == 0 && len > 12) { // Data frame with payload inline
-        size_t payload_len = len - 12;
-        print_hex_dump("  inline payload", data + 12, payload_len, 32);
-    }
+    print_hex_dump(direction, data, len, 32);
 }
 
 /* ---------- FRP message decoder (for logging) ---------- */
@@ -268,8 +196,7 @@ static int on_write_cb(void* user_ctx, uint8_t* data, size_t len) {
     if (!ctx || ctx->work_fd < 0) return -1;
 
     if (ctx->config.verbose >= 3) {
-        log_yamux_frame(ctx, "OUT", data, len);
-        ctx->stats.yamux_frames_out++;
+        log_raw_packet(ctx, "[OUT]", data, len);
     }
 
     if (demo_write_all(ctx->work_fd, data, len) != 0) {
@@ -395,8 +322,7 @@ static int pump_once(stress_ctx_t* ctx, int timeout_ms) {
         ctx->recv_buf_len += (size_t)n;
 
         if (ctx->config.verbose >= 3) {
-            log_yamux_frame(ctx, "IN", ctx->recv_buf, ctx->recv_buf_len);
-            ctx->stats.yamux_frames_in++;
+            log_raw_packet(ctx, "[IN]", ctx->recv_buf, ctx->recv_buf_len);
         }
 
         // Feed to stcp - process as much as we can
@@ -460,10 +386,6 @@ static void print_stats(stress_ctx_t* ctx, int final) {
         fprintf(stdout, "  Max latency:     %.2f ms\n", (double)ctx->stats.latency_max_us / 1000.0);
     }
     fprintf(stdout, "  Msg rate:        %.2f msg/s\n", msg_rate);
-    if (ctx->config.verbose >= 2) {
-        fprintf(stdout, "  Yamux frames in: %llu\n", (unsigned long long)ctx->stats.yamux_frames_in);
-        fprintf(stdout, "  Yamux frames out:%llu\n", (unsigned long long)ctx->stats.yamux_frames_out);
-    }
     fprintf(stdout, "  Errors:          %llu\n", (unsigned long long)ctx->stats.errors);
     
     // Fault injection stats (visitor only)
@@ -887,7 +809,7 @@ static void usage(const char* argv0) {
             "Verbosity:\n"
             "  -v                  Verbose (show connection info)\n"
             "  -vv                 Debug (show message info)\n"
-            "  -vvv                Trace (show all packets - Yamux frames, etc)\n"
+            "  -vvv                Trace (show all packets - raw data, FRP messages)\n"
             "  --json              Output final stats as JSON (for automation)\n"
             "\n"
             "Example (mock frps):\n"

@@ -30,7 +30,7 @@ enum frpc_error_code {
     FRPC_ERROR_INTERNAL = -7,
     FRPC_ERROR_CONNECTION_CLOSED = -8,
     FRPC_ERROR_CONNECTION_CLOSED_BY_REMOTE = -9,
-    FRPC_ERROR_STREAM_NOT_WRITABLE = -10 // Corresponds to yamux -6
+    FRPC_ERROR_STREAM_NOT_WRITABLE = -10 // Stream is not writable
 };
 
 // Callback function types
@@ -61,8 +61,11 @@ int frpc_client_tick(frpc_client_t* client);
 // Set event callback
 void frpc_client_set_event_callback(frpc_client_t* client, frpc_event_callback callback);
 
-// Send Yamux frame bytes (used by Yamux write_fn)
-// These bytes are sent to the frps connection, frps routes them to the work conn peer
+// Send raw bytes over the connection to frps
+// Returns number of bytes sent or negative error code
+int frpc_client_send_raw_bytes(frpc_client_t* client, const uint8_t* data, size_t len);
+
+// Legacy API for backwards compatibility (deprecated, use frpc_client_send_raw_bytes)
 int frpc_client_send_yamux_frame_bytes(frpc_client_t* client, const uint8_t* data, size_t len);
 
 // Send FRP protocol message (type byte + 8-byte length + JSON body)

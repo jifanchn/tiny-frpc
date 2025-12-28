@@ -12,10 +12,6 @@
 
 #include "../tiny-frpc/include/frpc-bindings.h"
 #include "../tiny-frpc/include/frpc-stcp.h"
-#include "../tiny-frpc/include/yamux.h"
-
-// We use yamux_serialize_frame_header from yamux.c (not declared in yamux.h)
-void yamux_serialize_frame_header(const yamux_frame_header_t* local_header, uint8_t* buffer);
 
 // NOTE: tests/ uses limited white-box access for coverage (unit tests only, does not affect external API).
 typedef struct frpc_client_wrapper {

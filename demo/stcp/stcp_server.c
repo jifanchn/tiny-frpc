@@ -240,7 +240,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Data-plane receive loop: read bytes -> frpc_stcp_receive -> yamux_session_receive.
+    // Data-plane receive loop: read bytes -> frpc_stcp_receive -> data callback.
     uint8_t buf[65536];
     size_t buf_len = 0;
 

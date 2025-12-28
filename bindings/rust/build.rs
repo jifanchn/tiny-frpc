@@ -17,7 +17,7 @@ fn main() {
     println!("cargo:rustc-link-search=native={}", build_dir.display());
     
     // Link against the shared bindings library (built by `make bindings-shared`).
-    // It already contains the core FRPC/Yamux/tools/wrapper objects.
+    // It already contains the core FRPC/tools/wrapper objects.
     println!("cargo:rustc-link-lib=dylib=frpc-bindings");
     // Ensure the test binary can find the dylib at runtime.
     println!("cargo:rustc-link-arg=-Wl,-rpath,{}", build_dir.display());

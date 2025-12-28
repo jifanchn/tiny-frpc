@@ -4,7 +4,7 @@
 package main
 
 /*
-#cgo LDFLAGS: -L../../build -lfrpc -lyamux -lcrypto -ltools -lwrapper
+#cgo LDFLAGS: -L../../build -lfrpc -lcrypto -ltools -lwrapper
 
 #include <stdlib.h>
 #include <string.h>

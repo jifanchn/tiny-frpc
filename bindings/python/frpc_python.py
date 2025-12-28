@@ -216,9 +216,6 @@ _lib.frpc_is_connected.restype = c_bool
 _lib.frpc_is_tunnel_active.argtypes = [c_void_p]
 _lib.frpc_is_tunnel_active.restype = c_bool
 
-_lib.frpc_tunnel_inject_yamux_frame.argtypes = [c_void_p, POINTER(c_uint8), c_size_t]
-_lib.frpc_tunnel_inject_yamux_frame.restype = c_int
-
 # Initialize library
 _lib.frpc_init()
 
@@ -425,22 +422,6 @@ class FRPCTunnel:
         
         return ret
 
-    def inject_yamux_frame(self, frame: bytes) -> int:
-        """Inject a "raw Yamux frame" (12-byte header + payload) into the tunnel.
-
-        Mainly used for tests: trigger data_callback, cover stats fields (e.g. bytes_received), etc.
-        """
-        if not self._handle:
-            raise FRPCException(ErrorCode.INVALID_PARAM, "Tunnel not initialized")
-        if isinstance(frame, str):
-            frame = frame.encode('utf-8')
-        if not isinstance(frame, (bytes, bytearray)):
-            raise FRPCException(ErrorCode.INVALID_PARAM, "frame must be bytes/bytearray")
-        arr = (c_uint8 * len(frame)).from_buffer_copy(frame)
-        ret = _lib.frpc_tunnel_inject_yamux_frame(self._handle, arr, len(frame))
-        if ret < 0:
-            raise FRPCException(ret)
-        return ret
     
     def get_stats(self) -> dict:
         """Get tunnel statistics"""

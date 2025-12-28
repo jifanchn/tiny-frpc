@@ -156,7 +156,6 @@ extern "C" {
     fn frpc_get_error_message(error_code: c_int) -> *const c_char;
     fn frpc_is_connected(handle: *mut c_void) -> bool;
     fn frpc_is_tunnel_active(tunnel: *mut c_void) -> bool;
-    fn frpc_tunnel_inject_yamux_frame(tunnel: *mut c_void, data: *const u8, len: size_t) -> c_int;
     fn frpc_set_encryption(handle: *mut c_void, enabled: bool);
 }
 
@@ -596,18 +595,6 @@ impl FrpcTunnel {
         Ok(ret as usize)
     }
 
-    /// Inject a "raw Yamux frame" (12-byte header + payload) into the tunnel.
-    /// Mainly used for tests: trigger callbacks and cover stats fields (e.g. bytes_received).
-    pub fn inject_yamux_frame(&self, frame: &[u8]) -> Result<usize> {
-        if frame.is_empty() {
-            return Err(ErrorCode::InvalidParam.into());
-        }
-        let ret = unsafe { frpc_tunnel_inject_yamux_frame(self.handle, frame.as_ptr(), frame.len()) };
-        if ret < 0 {
-            return Err(ErrorCode::from(ret).into());
-        }
-        Ok(ret as usize)
-    }
     
     /// Get tunnel statistics
     pub fn get_stats(&self) -> Result<TunnelStats> {
@@ -755,58 +742,6 @@ mod tests {
             }
         });
         port
-    }
-
-    #[test]
-    fn test_connect_and_inject_yamux_frame() {
-        // Positive: connect success + start visitor tunnel + inject Yamux DATA -> on_data
-        let port = start_mock_frps(b'1', "{\"version\":\"0.62.1\",\"run_id\":\"rs_test\"}");
-
-        let mut client = FrpcClient::new("127.0.0.1", port, Some("test_token")).unwrap();
-        // Mock FRPS does not support encryption
-        client.set_encryption(false);
-        client.connect().unwrap();
-
-        let handler = Arc::new(TestHandler {
-            data_received: AtomicBool::new(false),
-            connected: AtomicBool::new(false),
-        });
-
-        let cfg = TunnelConfig {
-            tunnel_type: TunnelType::StcpVisitor,
-            tunnel_name: "rs_stcp_visitor".to_string(),
-            secret_key: Some("rs_secret".to_string()),
-            local_addr: None,
-            local_port: None,
-            remote_name: Some("remote_server".to_string()),
-            bind_addr: Some("127.0.0.1".to_string()),
-            bind_port: Some(9090),
-        };
-
-        let tunnel = client.create_tunnel(cfg, Some(handler.clone())).unwrap();
-        tunnel.start().unwrap();
-
-        // Build a Yamux DATA frame (12-byte header + payload)
-        let payload = b"inbound-from-rust";
-        let mut frame = Vec::with_capacity(12 + payload.len());
-        frame.push(0); // version
-        frame.push(0); // type=DATA
-        frame.extend_from_slice(&0u16.to_be_bytes()); // flags
-        frame.extend_from_slice(&1u32.to_be_bytes()); // stream_id
-        frame.extend_from_slice(&(payload.len() as u32).to_be_bytes()); // length
-        frame.extend_from_slice(payload);
-
-        let consumed = tunnel.inject_yamux_frame(&frame).unwrap();
-        assert!(consumed > 0);
-
-        // Callback should be triggered
-        assert!(handler.data_received.load(Ordering::Relaxed));
-
-        // Stats should be updated
-        let st = tunnel.get_stats().unwrap();
-        assert!(st.bytes_received > 0);
-
-        let _ = client.disconnect();
     }
 
     #[test]

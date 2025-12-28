@@ -1,7 +1,6 @@
 #include "frpc-bindings.h"
 #include "frpc.h"
 #include "frpc-stcp.h"
-#include "yamux.h"
 #include "tools.h"
 #include <stdlib.h>
 #include <string.h>
@@ -713,7 +712,8 @@ bool frpc_is_tunnel_active(frpc_tunnel_handle_t tunnel) {
     return t->active;
 }
 
-int frpc_tunnel_inject_yamux_frame(frpc_tunnel_handle_t tunnel, const uint8_t* data, size_t len) {
+// Feed raw bytes to the tunnel for processing (e.g., data received from server).
+int frpc_tunnel_inject_data(frpc_tunnel_handle_t tunnel, const uint8_t* data, size_t len) {
     if (!tunnel || !data || len == 0) {
         return FRPC_ERROR_INVALID_PARAM;
     }
@@ -721,6 +721,6 @@ int frpc_tunnel_inject_yamux_frame(frpc_tunnel_handle_t tunnel, const uint8_t* d
     if (!t->stcp_proxy) {
         return FRPC_ERROR_INVALID_PARAM;
     }
-    // Feed raw bytes into the STCP/Yamux parser; it will dispatch to data_callback if applicable.
+    // Feed raw bytes into the STCP parser; it will dispatch to data_callback if applicable.
     return frpc_stcp_receive(t->stcp_proxy, data, len);
 }

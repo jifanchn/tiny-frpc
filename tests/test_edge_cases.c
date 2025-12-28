@@ -23,7 +23,6 @@
 
 #include "../tiny-frpc/include/frpc.h"
 #include "../tiny-frpc/include/frpc-stcp.h"
-#include "../tiny-frpc/include/yamux.h"
 #include "../tiny-frpc/include/crypto.h"
 #include "../tiny-frpc/include/tools.h"
 
@@ -152,20 +151,20 @@ static int test_zero_length_payload(void) {
 }
 
 // ============================================================================
-// Test 4: Maximum Stream ID (Yamux boundary)
+// Test 4: Maximum ID Boundaries
 // ============================================================================
 
 static int test_max_stream_id(void) {
-    printf("\n=== Test: Maximum Stream ID ===\n");
+    printf("\n=== Test: Maximum ID Boundaries ===\n");
 
-    // Yamux maximum stream ID is 0xFFFFFFFF (UINT32_MAX)
+    // Test maximum 32-bit unsigned value handling
     uint32_t max_id = 0xFFFFFFFF;
 
-    // Verify our implementation handles this correctly
-    TEST_ASSERT(max_id > 0, "max stream ID is valid");
-    TEST_ASSERT((int32_t)max_id < 0, "max stream ID looks negative when signed");
+    // Verify boundary handling
+    TEST_ASSERT(max_id > 0, "max ID is valid");
+    TEST_ASSERT((int32_t)max_id < 0, "max ID looks negative when signed");
 
-    printf("PASS: Maximum stream ID boundary\n");
+    printf("PASS: Maximum ID boundary\n");
     return 0;
 }
 

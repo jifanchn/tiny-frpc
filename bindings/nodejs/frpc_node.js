@@ -169,19 +169,6 @@ class FRPCTunnel extends EventEmitter {
     return ret;
   }
 
-  /**
-   * Inject a "raw Yamux frame" (12-byte header + payload) into the tunnel.
-   * Mainly used for tests: trigger onData callback, cover stats fields, etc.
-   */
-  injectYamuxFrame(frame) {
-    const buf = Buffer.isBuffer(frame) ? frame : Buffer.from(frame);
-    const ret = native.tunnelInjectYamuxFrame(this._handle, buf);
-    if (ret < 0) {
-      throw new FRPCError(ret);
-    }
-    return ret;
-  }
-
   getStats() {
     return native.tunnelGetStats(this._handle);
   }

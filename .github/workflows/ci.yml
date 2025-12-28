@@ -67,10 +67,6 @@ jobs:
         if: runner.os != 'Windows'
         run: make c-test
 
-      - name: Run Yamux CGO tests
-        if: runner.os != 'Windows'
-        run: make yamux-test
-
       - name: Run FRPC CGO tests
         if: runner.os != 'Windows'
         run: make frpc-test
@@ -92,7 +88,7 @@ jobs:
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           . $HOME/.cargo/env
-          make rust-bindings-test
+          make rust-e2e-test
 
   multi-channel-test:
     runs-on: ${{ matrix.os }}
@@ -181,3 +177,68 @@ jobs:
 
       - name: Run Node.js E2E tests
         run: make nodejs-e2e-test
+
+  p3-test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install gcc
+
+      - name: Install Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Download Go modules
+        run: go mod download
+        env:
+          GOPROXY: https://goproxy.cn,direct
+
+      - name: Build C libraries and FRPS
+        run: |
+          make all
+          make bindings-shared
+          make frps-build
+
+      - name: Run P3 Python tests
+        run: make p3-python
+
+      - name: Run P3 Node.js tests
+        run: make p3-node
+
+      - name: Run P3 Rust tests
+        run: make p3-rust

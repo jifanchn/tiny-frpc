@@ -29,7 +29,6 @@ This document consolidates the technical design, protocol specifications, and im
 |-----------|------|-------------|
 | **Core Protocol** | `source/frpc.c` | FRP framing, Control connection management, Login logic. |
 | **STCP Logic** | `source/frpc-stcp.c` | Secret TCP (P2P-like) proxy and visitor implementation. |
-| **Multiplexer** | `source/yamux.c` | Yamux protocol implementation (Stream multiplexing). |
 | **Utils** | `source/tools.c` | MD5, Time, Parsing helpers. |
 | **Crypto** | `source/crypto.c` | AES-128-CFB encryption implementation. |
 | **Wrapper** | `wrapper/` | Replaceable OS abstraction (Linux/POSIX implementation provided). |
@@ -61,27 +60,7 @@ FRP uses a custom framing protocol over TCP:
 
 ---
 
-## 3. Yamux Multiplexing
-
-`tiny-frpc` includes a full C implementation of the HashiCorp Yamux protocol to support `tcp_mux` (multiplexing control and data over a single connection).
-
-### Frame Format
-Header is 12 bytes: `[Ver(1)][Type(1)][Flags(2)][StreamID(4)][Length(4)]`
-
-### Critical semantics aligned with upstream:
-1.  **Ping**:
-    *   Request: `Flags=SYN`, `Length=OpaqueID`.
-    *   Response: `Flags=ACK`, `Length=OpaqueID`.
-2.  **GoAway**:
-    *   `StreamID=0`.
-    *   `Length=ErrorCode` (0=Normal, 1=Proto, 2=Internal).
-3.  **Stream IDs**:
-    *   Client-initiated: Odd (1, 3, 5...).
-    *   Server-initiated: Even (2, 4, 6...).
-
----
-
-## 4. STCP (Secret TCP) Implementation
+## 3. STCP (Secret TCP) Implementation
 
 STCP allows secure, direct traffic forwarding between a Visitor and a Server (Proxy) via the FRPS relay.
 
@@ -113,13 +92,13 @@ STCP allows secure, direct traffic forwarding between a Visitor and a Server (Pr
     *   The Visitor must periodically poll its connection for incoming data (e.g., broadcast messages from the Server). This is handled by `frpc_tunnel_tick()`.
 2.  **Work Connections**:
     *   The Server maintains a pool of "Work Connections". When `ReqWorkConn` is received, it opens a fresh connection to FRPS to handle the specific visitor session.
-3.  **Direct vs. Mux**:
-    *   **Direct Mode**: Data is sent raw over the socket. Used when `tcp_mux=false`.
-    *   **Mux Mode**: Data is encapsulated in Yamux frames. Used when `tcp_mux=true` (default).
+3.  **Direct TCP Mode**:
+    *   Data is sent raw over the socket.
+    *   **Note**: This implementation only supports Direct Mode (`tcp_mux=false`). Yamux multiplexing (`tcp_mux=true`) is not supported.
 
 ---
 
-## 5. Development Status
+## 4. Development Status
 
 **Current State**: ✅ Feature Complete / Maintenance
 

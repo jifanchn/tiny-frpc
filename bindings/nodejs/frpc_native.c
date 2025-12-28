@@ -500,31 +500,6 @@ static napi_value js_tunnel_send(napi_env env, napi_callback_info info) {
     return napi_int32(env, (int32_t)ret);
 }
 
-// Inject a "raw Yamux frame" into a tunnel (for tests or advanced use cases).
-// Args: tunnelHandle, frameBuffer (12-byte header + payload)
-static napi_value js_tunnel_inject_yamux_frame(napi_env env, napi_callback_info info) {
-    size_t argc = 2;
-    napi_value argv[2];
-    NAPI_CALL(env, napi_get_cb_info(env, info, &argc, argv, NULL, NULL));
-    if (argc < 2) return napi_int32(env, FRPC_ERROR_INVALID_PARAM);
-
-    tunnel_wrap_t* w = unwrap_tunnel(env, argv[0]);
-    if (!w || w->destroyed || !w->tunnel) return napi_int32(env, FRPC_ERROR_INVALID_PARAM);
-
-    bool is_buf = false;
-    NAPI_CALL(env, napi_is_buffer(env, argv[1], &is_buf));
-    if (!is_buf) {
-        napi_throw_type_error(env, NULL, "tunnelInjectYamuxFrame expects a Buffer");
-        return NULL;
-    }
-
-    void* data = NULL;
-    size_t len = 0;
-    NAPI_CALL(env, napi_get_buffer_info(env, argv[1], &data, &len));
-    int ret = frpc_tunnel_inject_yamux_frame(w->tunnel, (const uint8_t*)data, len);
-    return napi_int32(env, (int32_t)ret);
-}
-
 static napi_value js_tunnel_is_active(napi_env env, napi_callback_info info) {
     size_t argc = 1;
     napi_value argv[1];
@@ -615,7 +590,6 @@ static napi_value init(napi_env env, napi_value exports) {
         { "tunnelStart", 0, js_tunnel_start, 0, 0, 0, napi_default, 0 },
         { "tunnelStop", 0, js_tunnel_stop, 0, 0, 0, napi_default, 0 },
         { "tunnelSend", 0, js_tunnel_send, 0, 0, 0, napi_default, 0 },
-        { "tunnelInjectYamuxFrame", 0, js_tunnel_inject_yamux_frame, 0, 0, 0, napi_default, 0 },
         { "tunnelIsActive", 0, js_tunnel_is_active, 0, 0, 0, napi_default, 0 },
         { "tunnelTick", 0, js_tunnel_tick, 0, 0, 0, napi_default, 0 },
         { "tunnelGetStats", 0, js_tunnel_get_stats, 0, 0, 0, napi_default, 0 },

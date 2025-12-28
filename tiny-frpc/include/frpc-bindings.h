@@ -233,14 +233,13 @@ const char* frpc_get_error_message(int error_code);
 bool frpc_is_connected(frpc_handle_t handle);
 bool frpc_is_tunnel_active(frpc_tunnel_handle_t tunnel);
 
-// Inject a raw Yamux frame into the tunnel's STCP/Yamux session.
+// Inject raw data into the tunnel for processing (e.g., data received from server).
 //
 // Notes:
 // - This is a low-level API mainly for language-binding unit tests (e.g. to trigger data_callback),
 //   or advanced use cases where the caller integrates the underlying network I/O manually.
-// - `data` must be a complete Yamux frame (12-byte header + payload), in network byte order (big-endian).
 // - Return value: >= 0 means number of bytes consumed; < 0 means FRPC_ERROR_*.
-int frpc_tunnel_inject_yamux_frame(frpc_tunnel_handle_t tunnel, const uint8_t* data, size_t len);
+int frpc_tunnel_inject_data(frpc_tunnel_handle_t tunnel, const uint8_t* data, size_t len);
 
 #ifdef __cplusplus
 }

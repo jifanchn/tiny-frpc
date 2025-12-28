@@ -5,7 +5,6 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include "frpc.h"   // Include basic FRP client definitions
-#include "yamux.h"  // Include yamux session and stream definitions
 
 // STCP proxy role types
 typedef enum {

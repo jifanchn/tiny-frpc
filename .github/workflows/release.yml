@@ -86,7 +86,6 @@ jobs:
         run: |
           # Static libraries
           cp build/libfrpc.a release/lib/
-          cp build/libyamux.a release/lib/
           cp build/libcrypto.a release/lib/
           cp build/libtools.a release/lib/
           cp build/libwrapper.a release/lib/
@@ -139,7 +138,6 @@ jobs:
         run: |
           # Static libraries
           cp build/libfrpc.a release/lib/
-          cp build/libyamux.a release/lib/
           cp build/libcrypto.a release/lib/
           cp build/libtools.a release/lib/
           cp build/libwrapper.a release/lib/

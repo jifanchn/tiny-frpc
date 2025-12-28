@@ -16,7 +16,3 @@ path = "src/bin/p3_server.rs"
 [[bin]]
 name = "p3_visitor"
 path = "src/bin/p3_visitor.rs"
-
-[[bin]]
-name = "test_p3"
-path = "src/bin/test_p3.rs"

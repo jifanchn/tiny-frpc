@@ -621,32 +621,32 @@ void frpc_client_set_event_callback(frpc_client_t* client, frpc_event_callback c
     client->event_callback = callback;
 }
 
-// Send raw Yamux frame bytes (used by Yamux write_fn).
-// These bytes should be sent over the connection to frps; frps routes them to the other side of the work connection.
-int frpc_client_send_yamux_frame_bytes(frpc_client_t* client, const uint8_t* data, size_t len) {
+// Send raw bytes over the connection to frps.
+// These bytes are sent directly without any protocol framing.
+int frpc_client_send_raw_bytes(frpc_client_t* client, const uint8_t* data, size_t len) {
     if (!client || !data || len == 0) {
         if (frpc_verbose_enabled()) {
-            fprintf(stderr, "frpc_client_send_yamux_frame_bytes: Invalid parameters\n");
+            fprintf(stderr, "frpc_client_send_raw_bytes: Invalid parameters\n");
         }
         return FRPC_ERROR_INVALID_PARAM;
     }
 
     if (!client->is_connected) {
         if (frpc_verbose_enabled()) {
-            fprintf(stderr, "frpc_client_send_yamux_frame_bytes: Client not connected\n");
+            fprintf(stderr, "frpc_client_send_raw_bytes: Client not connected\n");
         }
         return FRPC_ERROR_NETWORK;
     }
 
     if (client->socket_fd < 0) {
         if (frpc_verbose_enabled()) {
-            fprintf(stderr, "frpc_client_send_yamux_frame_bytes: Invalid socket fd\n");
+            fprintf(stderr, "frpc_client_send_raw_bytes: Invalid socket fd\n");
         }
         return FRPC_ERROR_NETWORK;
     }
 
     if (frpc_verbose_enabled()) {
-        fprintf(stdout, "FRPC_CLIENT_SEND_YAMUX_BYTES: Client %p, len %zu, fd %d. Data (first 16 bytes hex): ", 
+        fprintf(stdout, "FRPC_CLIENT_SEND_RAW_BYTES: Client %p, len %zu, fd %d. Data (first 16 bytes hex): ", 
                 (void*)client, len, client->socket_fd);
         for (size_t i = 0; i < len && i < 16; ++i) {
             fprintf(stdout, "%02x ", data[i]);
@@ -665,14 +665,14 @@ int frpc_client_send_yamux_frame_bytes(frpc_client_t* client, const uint8_t* dat
                 continue; // Retry on interrupt
             }
             if (frpc_verbose_enabled()) {
-                fprintf(stderr, "frpc_client_send_yamux_frame_bytes: write failed, errno=%d\n", err);
+                fprintf(stderr, "frpc_client_send_raw_bytes: write failed, errno=%d\n", err);
             }
             return FRPC_ERROR_NETWORK;
         }
         if (sent == 0) {
             // Connection closed
             if (frpc_verbose_enabled()) {
-                fprintf(stderr, "frpc_client_send_yamux_frame_bytes: connection closed\n");
+                fprintf(stderr, "frpc_client_send_raw_bytes: connection closed\n");
             }
             return FRPC_ERROR_CONNECTION_CLOSED;
         }
@@ -680,6 +680,11 @@ int frpc_client_send_yamux_frame_bytes(frpc_client_t* client, const uint8_t* dat
     }
 
     return (int)total_sent;
+}
+
+// Legacy API for backwards compatibility
+int frpc_client_send_yamux_frame_bytes(frpc_client_t* client, const uint8_t* data, size_t len) {
+    return frpc_client_send_raw_bytes(client, data, len);
 }
 
 // Send FRP protocol message via client socket (with encryption after login)

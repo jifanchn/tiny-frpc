@@ -103,7 +103,6 @@ BINDINGS_SHLIB_DIR_STAMP := $(BINDINGS_SHLIB_DIR)/.dir
 
 TOOLS_PIC_OBJ := $(BINDINGS_SHLIB_DIR)/tools.pic.o
 CRYPTO_PIC_OBJ := $(BINDINGS_SHLIB_DIR)/crypto.pic.o
-YAMUX_PIC_OBJ := $(BINDINGS_SHLIB_DIR)/yamux.pic.o
 FRPC_PIC_OBJ := $(BINDINGS_SHLIB_DIR)/frpc.pic.o
 FRPC_STCP_PIC_OBJ := $(BINDINGS_SHLIB_DIR)/frpc-stcp.pic.o
 WRAPPER_PIC_OBJ := $(BINDINGS_SHLIB_DIR)/wrapper.pic.o
@@ -112,7 +111,6 @@ BINDINGS_PIC_OBJ := $(BINDINGS_SHLIB_DIR)/frpc-bindings.pic.o
 # Output files
 TOOLS_OBJ := $(BUILD_DIR)/tools.o
 CRYPTO_OBJ := $(BUILD_DIR)/crypto.o
-YAMUX_OBJ := $(BUILD_DIR)/yamux.o
 FRPC_OBJ := $(BUILD_DIR)/frpc.o
 FRPC_STCP_OBJ := $(BUILD_DIR)/frpc-stcp.o
 WRAPPER_OBJ := $(BUILD_DIR)/wrapper.o
@@ -120,7 +118,6 @@ BINDINGS_OBJ := $(BUILD_DIR)/frpc-bindings.o
 
 TOOLS_LIB := $(BUILD_DIR)/libtools.a
 CRYPTO_LIB := $(BUILD_DIR)/libcrypto.a
-YAMUX_LIB := $(BUILD_DIR)/libyamux.a
 FRPC_LIB := $(BUILD_DIR)/libfrpc.a
 WRAPPER_LIB := $(BUILD_DIR)/libwrapper.a
 BINDINGS_LIB := $(BUILD_DIR)/libfrpc-bindings.a
@@ -149,16 +146,13 @@ help:
 	@echo ""
 	@echo "Tip: legacy target names still exist (e.g. bindings-test, python-bindings-test, demo-stcp-run)."
 
-all: $(TOOLS_LIB) $(CRYPTO_LIB) $(YAMUX_LIB) $(FRPC_LIB) $(WRAPPER_LIB) $(BINDINGS_LIB)
+all: $(TOOLS_LIB) $(CRYPTO_LIB) $(FRPC_LIB) $(WRAPPER_LIB) $(BINDINGS_LIB)
 
 # ---- build: objects ----
 $(TOOLS_OBJ): $(SOURCE_DIR)/tools.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(CRYPTO_OBJ): $(SOURCE_DIR)/crypto.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(YAMUX_OBJ): $(SOURCE_DIR)/yamux.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(FRPC_OBJ): $(SOURCE_DIR)/frpc.c | $(BUILD_DIR)
@@ -178,9 +172,6 @@ $(TOOLS_LIB): $(TOOLS_OBJ)
 	ar rcs $@ $^
 
 $(CRYPTO_LIB): $(CRYPTO_OBJ)
-	ar rcs $@ $^
-
-$(YAMUX_LIB): $(YAMUX_OBJ)
 	ar rcs $@ $^
 
 $(FRPC_LIB): $(FRPC_OBJ) $(FRPC_STCP_OBJ)
@@ -210,9 +201,6 @@ $(TOOLS_PIC_OBJ): $(SOURCE_DIR)/tools.c | $(BINDINGS_SHLIB_DIR_STAMP)
 $(CRYPTO_PIC_OBJ): $(SOURCE_DIR)/crypto.c | $(BINDINGS_SHLIB_DIR_STAMP)
 	$(CC) $(CFLAGS) $(PIC_CFLAGS) -c $< -o $@
 
-$(YAMUX_PIC_OBJ): $(SOURCE_DIR)/yamux.c | $(BINDINGS_SHLIB_DIR_STAMP)
-	$(CC) $(CFLAGS) $(PIC_CFLAGS) -c $< -o $@
-
 $(FRPC_PIC_OBJ): $(SOURCE_DIR)/frpc.c | $(BINDINGS_SHLIB_DIR_STAMP)
 	$(CC) $(CFLAGS) $(PIC_CFLAGS) -c $< -o $@
 
@@ -225,7 +213,7 @@ $(WRAPPER_PIC_OBJ): $(WRAPPER_DIR)/wrapper.c | $(BINDINGS_SHLIB_DIR_STAMP)
 $(BINDINGS_PIC_OBJ): $(SOURCE_DIR)/frpc-bindings.c | $(BINDINGS_SHLIB_DIR_STAMP)
 	$(CC) $(CFLAGS) $(PIC_CFLAGS) -c $< -o $@
 
-$(BINDINGS_SHLIB): $(TOOLS_PIC_OBJ) $(CRYPTO_PIC_OBJ) $(YAMUX_PIC_OBJ) $(FRPC_PIC_OBJ) $(FRPC_STCP_PIC_OBJ) $(WRAPPER_PIC_OBJ) $(BINDINGS_PIC_OBJ)
+$(BINDINGS_SHLIB): $(TOOLS_PIC_OBJ) $(CRYPTO_PIC_OBJ) $(FRPC_PIC_OBJ) $(FRPC_STCP_PIC_OBJ) $(WRAPPER_PIC_OBJ) $(BINDINGS_PIC_OBJ)
 	$(CC) $(SHLIB_LDFLAGS) $(SHLIB_ID_LDFLAGS) -o $@ $^ -pthread $(LDFLAGS)
 
 bindings-shared: $(BINDINGS_SHLIB)
@@ -245,32 +233,26 @@ $(BUILD_DIR)/test_wrapper: tests/test_wrapper.c $(WRAPPER_LIB) | $(BUILD_DIR)
 wrapper-test: $(BUILD_DIR)/test_wrapper
 	$(RUN_ENV) $(BUILD_DIR)/test_wrapper
 
-$(BUILD_DIR)/test_tunnel_config: tests/test_tunnel_config.c $(BINDINGS_LIB) $(FRPC_LIB) $(CRYPTO_LIB) $(TOOLS_LIB) $(YAMUX_LIB) $(WRAPPER_LIB) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -o $@ $< $(BINDINGS_LIB) $(FRPC_LIB) $(CRYPTO_LIB) $(TOOLS_LIB) $(YAMUX_LIB) $(WRAPPER_LIB) -pthread $(LDFLAGS)
+$(BUILD_DIR)/test_tunnel_config: tests/test_tunnel_config.c $(BINDINGS_LIB) $(FRPC_LIB) $(CRYPTO_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -o $@ $< $(BINDINGS_LIB) $(FRPC_LIB) $(CRYPTO_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) -pthread $(LDFLAGS)
 
 config-test: $(BUILD_DIR)/test_tunnel_config
 	$(RUN_ENV) $(BUILD_DIR)/test_tunnel_config
 
-$(BUILD_DIR)/test_error_handling: tests/test_error_handling.c $(BINDINGS_LIB) $(FRPC_LIB) $(CRYPTO_LIB) $(TOOLS_LIB) $(YAMUX_LIB) $(WRAPPER_LIB) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -o $@ $< $(BINDINGS_LIB) $(FRPC_LIB) $(CRYPTO_LIB) $(TOOLS_LIB) $(YAMUX_LIB) $(WRAPPER_LIB) -pthread $(LDFLAGS)
+$(BUILD_DIR)/test_error_handling: tests/test_error_handling.c $(BINDINGS_LIB) $(FRPC_LIB) $(CRYPTO_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -o $@ $< $(BINDINGS_LIB) $(FRPC_LIB) $(CRYPTO_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) -pthread $(LDFLAGS)
 
 error-test: $(BUILD_DIR)/test_error_handling
 	$(RUN_ENV) $(BUILD_DIR)/test_error_handling
 
-$(BUILD_DIR)/test_frpc_bindings_api: tests/test_frpc_bindings_api.c $(BINDINGS_LIB) $(FRPC_LIB) $(CRYPTO_LIB) $(TOOLS_LIB) $(YAMUX_LIB) $(WRAPPER_LIB) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -o $@ $< $(BINDINGS_LIB) $(FRPC_LIB) $(CRYPTO_LIB) $(TOOLS_LIB) $(YAMUX_LIB) $(WRAPPER_LIB) -pthread $(LDFLAGS)
+$(BUILD_DIR)/test_frpc_bindings_api: tests/test_frpc_bindings_api.c $(BINDINGS_LIB) $(FRPC_LIB) $(CRYPTO_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -o $@ $< $(BINDINGS_LIB) $(FRPC_LIB) $(CRYPTO_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) -pthread $(LDFLAGS)
 
 bindings-api-test: $(BUILD_DIR)/test_frpc_bindings_api
 	$(RUN_ENV) $(BUILD_DIR)/test_frpc_bindings_api
 
-$(BUILD_DIR)/test_yamux_unit: tests/test_yamux_unit.c $(YAMUX_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -o $@ $< $(YAMUX_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) $(LDFLAGS)
-
-yamux-unit-test: $(BUILD_DIR)/test_yamux_unit
-	$(RUN_ENV) $(BUILD_DIR)/test_yamux_unit
-
-$(BUILD_DIR)/test_frpc_stcp_unit: tests/test_frpc_stcp_unit.c $(FRPC_LIB) $(CRYPTO_LIB) $(YAMUX_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -o $@ $< $(FRPC_LIB) $(CRYPTO_LIB) $(YAMUX_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) -pthread $(LDFLAGS)
+$(BUILD_DIR)/test_frpc_stcp_unit: tests/test_frpc_stcp_unit.c $(FRPC_LIB) $(CRYPTO_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -o $@ $< $(FRPC_LIB) $(CRYPTO_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) -pthread $(LDFLAGS)
 
 stcp-unit-test: $(BUILD_DIR)/test_frpc_stcp_unit
 	$(RUN_ENV) $(BUILD_DIR)/test_frpc_stcp_unit
@@ -287,26 +269,17 @@ $(BUILD_DIR)/test_crypto: tests/test_crypto.c $(CRYPTO_LIB) $(WRAPPER_LIB) | $(B
 crypto-test: $(BUILD_DIR)/test_crypto
 	$(RUN_ENV) $(BUILD_DIR)/test_crypto
 
-$(BUILD_DIR)/test_edge_cases: tests/test_edge_cases.c $(FRPC_LIB) $(CRYPTO_LIB) $(TOOLS_LIB) $(YAMUX_LIB) $(WRAPPER_LIB) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -o $@ $< $(FRPC_LIB) $(CRYPTO_LIB) $(TOOLS_LIB) $(YAMUX_LIB) $(WRAPPER_LIB) -pthread $(LDFLAGS)
+$(BUILD_DIR)/test_edge_cases: tests/test_edge_cases.c $(FRPC_LIB) $(CRYPTO_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -o $@ $< $(FRPC_LIB) $(CRYPTO_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) -pthread $(LDFLAGS)
 
 edge-case-test: $(BUILD_DIR)/test_edge_cases
 	$(RUN_ENV) $(BUILD_DIR)/test_edge_cases
 
-c-test: all tools-test wrapper-test yamux-unit-test config-test error-test bindings-api-test stcp-unit-test frpc-core-test crypto-test edge-case-test
+c-test: all tools-test wrapper-test config-test error-test bindings-api-test stcp-unit-test frpc-core-test crypto-test edge-case-test
 
 # ------------------------
 # cmd/ tests (CGO: Go <-> C alignment)
 # ------------------------
-yamux-test: all
-	$(GO) clean -cache
-	CGO_CFLAGS="-I$(abspath $(INCLUDE_DIR)) -I$(abspath $(WRAPPER_DIR))" $(GO) build -tags "yamux_basic" -a -o $(BUILD_DIR)/yamux_basic_test cmd/yamux_test/basic.go cmd/yamux_test/coverage_flush_stub.go
-	CGO_CFLAGS="-I$(abspath $(INCLUDE_DIR)) -I$(abspath $(WRAPPER_DIR))" $(GO) build -tags "yamux_protocol" -a -o $(BUILD_DIR)/yamux_protocol_test cmd/yamux_test/protocol.go cmd/yamux_test/coverage_flush_stub.go
-	CGO_CFLAGS="-I$(abspath $(INCLUDE_DIR)) -I$(abspath $(WRAPPER_DIR))" $(GO) build -tags "yamux_interop" -a -o $(BUILD_DIR)/yamux_interop_test cmd/yamux_test/interop.go cmd/yamux_test/coverage_flush_stub.go
-	$(RUN_ENV) $(BUILD_DIR)/yamux_basic_test
-	$(RUN_ENV) $(BUILD_DIR)/yamux_protocol_test
-	$(RUN_ENV) $(BUILD_DIR)/yamux_interop_test
-
 frpc-test: all
 	$(GO) clean -cache
 	CGO_CFLAGS="-I$(abspath $(INCLUDE_DIR)) -I$(abspath $(WRAPPER_DIR))" $(GO) build -a -o $(BUILD_DIR)/frpc_test ./cmd/frpc_test
@@ -318,7 +291,7 @@ frpc-multi-channel-test: all
 		cmd/frpc_test/multi_channel.go cmd/frpc_test/coverage_flush_stub.go
 	$(RUN_ENV) $(BUILD_DIR)/frpc_multi_channel_test
 
-cmd-test: yamux-test frpc-test
+cmd-test: frpc-test
 
 # Unified target: `make test`
 test: c-test cmd-test
@@ -396,17 +369,17 @@ $(DEMO_STCP_COMMON_OBJ): $(DEMO_STCP_DIR)/common.c $(DEMO_STCP_DIR)/common.h | $
 $(DEMO_STCP_FRPS_BIN): $(DEMO_STCP_DIR)/mock_frps.c $(DEMO_STCP_COMMON_OBJ) $(WRAPPER_LIB) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(DEMO_STCP_CFLAGS) -o $@ $(DEMO_STCP_DIR)/mock_frps.c $(DEMO_STCP_COMMON_OBJ) $(WRAPPER_LIB) -pthread $(LDFLAGS)
 
-$(DEMO_STCP_SERVER_BIN): $(DEMO_STCP_DIR)/stcp_server.c $(DEMO_STCP_COMMON_OBJ) $(FRPC_LIB) $(CRYPTO_LIB) $(YAMUX_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) $(DEMO_STCP_CFLAGS) -o $@ $(DEMO_STCP_DIR)/stcp_server.c $(DEMO_STCP_COMMON_OBJ) $(FRPC_LIB) $(CRYPTO_LIB) $(YAMUX_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) -pthread $(LDFLAGS)
+$(DEMO_STCP_SERVER_BIN): $(DEMO_STCP_DIR)/stcp_server.c $(DEMO_STCP_COMMON_OBJ) $(FRPC_LIB) $(CRYPTO_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(DEMO_STCP_CFLAGS) -o $@ $(DEMO_STCP_DIR)/stcp_server.c $(DEMO_STCP_COMMON_OBJ) $(FRPC_LIB) $(CRYPTO_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) -pthread $(LDFLAGS)
 
-$(DEMO_STCP_VISITOR_BIN): $(DEMO_STCP_DIR)/stcp_visitor.c $(DEMO_STCP_COMMON_OBJ) $(FRPC_LIB) $(CRYPTO_LIB) $(YAMUX_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) $(DEMO_STCP_CFLAGS) -o $@ $(DEMO_STCP_DIR)/stcp_visitor.c $(DEMO_STCP_COMMON_OBJ) $(FRPC_LIB) $(CRYPTO_LIB) $(YAMUX_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) -pthread $(LDFLAGS)
+$(DEMO_STCP_VISITOR_BIN): $(DEMO_STCP_DIR)/stcp_visitor.c $(DEMO_STCP_COMMON_OBJ) $(FRPC_LIB) $(CRYPTO_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(DEMO_STCP_CFLAGS) -o $@ $(DEMO_STCP_DIR)/stcp_visitor.c $(DEMO_STCP_COMMON_OBJ) $(FRPC_LIB) $(CRYPTO_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) -pthread $(LDFLAGS)
 
 $(DEMO_STCP_LOCAL_CLIENT_BIN): $(DEMO_STCP_DIR)/local_client.c $(DEMO_STCP_COMMON_OBJ) $(WRAPPER_LIB) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(DEMO_STCP_CFLAGS) -o $@ $(DEMO_STCP_DIR)/local_client.c $(DEMO_STCP_COMMON_OBJ) $(WRAPPER_LIB) -pthread $(LDFLAGS)
 
-$(DEMO_STCP_STRESS_BIN): $(DEMO_STCP_DIR)/stress_test.c $(DEMO_STCP_COMMON_OBJ) $(FRPC_LIB) $(CRYPTO_LIB) $(YAMUX_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) $(DEMO_STCP_CFLAGS) -o $@ $(DEMO_STCP_DIR)/stress_test.c $(DEMO_STCP_COMMON_OBJ) $(FRPC_LIB) $(CRYPTO_LIB) $(YAMUX_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) -pthread $(LDFLAGS)
+$(DEMO_STCP_STRESS_BIN): $(DEMO_STCP_DIR)/stress_test.c $(DEMO_STCP_COMMON_OBJ) $(FRPC_LIB) $(CRYPTO_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(DEMO_STCP_CFLAGS) -o $@ $(DEMO_STCP_DIR)/stress_test.c $(DEMO_STCP_COMMON_OBJ) $(FRPC_LIB) $(CRYPTO_LIB) $(TOOLS_LIB) $(WRAPPER_LIB) -pthread $(LDFLAGS)
 
 demo-stcp: all $(DEMO_STCP_FRPS_BIN) $(DEMO_STCP_SERVER_BIN) $(DEMO_STCP_VISITOR_BIN) $(DEMO_STCP_LOCAL_CLIENT_BIN) $(DEMO_STCP_STRESS_BIN)
 
@@ -498,13 +471,7 @@ demo-stcp-stress-interactive: demo-stcp
 # ------------------------
 cmd-coverage: all
 	$(GO) clean -cache
-	CGO_LDFLAGS="$(COV_GO_LDFLAGS) -L$(abspath $(BUILD_DIR))" CGO_CFLAGS="-I$(abspath $(INCLUDE_DIR)) -I$(abspath $(WRAPPER_DIR))" $(GO) build -tags "covflush yamux_basic" -a -o $(BUILD_DIR)/yamux_basic_test cmd/yamux_test/basic.go cmd/yamux_test/coverage_flush_covflush.go
-	CGO_LDFLAGS="$(COV_GO_LDFLAGS) -L$(abspath $(BUILD_DIR))" CGO_CFLAGS="-I$(abspath $(INCLUDE_DIR)) -I$(abspath $(WRAPPER_DIR))" $(GO) build -tags "covflush yamux_protocol" -a -o $(BUILD_DIR)/yamux_protocol_test cmd/yamux_test/protocol.go cmd/yamux_test/coverage_flush_covflush.go
-	CGO_LDFLAGS="$(COV_GO_LDFLAGS) -L$(abspath $(BUILD_DIR))" CGO_CFLAGS="-I$(abspath $(INCLUDE_DIR)) -I$(abspath $(WRAPPER_DIR))" $(GO) build -tags "covflush yamux_interop" -a -o $(BUILD_DIR)/yamux_interop_test cmd/yamux_test/interop.go cmd/yamux_test/coverage_flush_covflush.go
 	CGO_LDFLAGS="$(COV_GO_LDFLAGS) -L$(abspath $(BUILD_DIR))" CGO_CFLAGS="-I$(abspath $(INCLUDE_DIR)) -I$(abspath $(WRAPPER_DIR))" $(GO) build -tags covflush -a -o $(BUILD_DIR)/frpc_test ./cmd/frpc_test
-	$(RUN_ENV) $(BUILD_DIR)/yamux_basic_test
-	$(RUN_ENV) $(BUILD_DIR)/yamux_protocol_test
-	$(RUN_ENV) $(BUILD_DIR)/yamux_interop_test
 	$(RUN_ENV) $(BUILD_DIR)/frpc_test
 
 coverage: clean
@@ -517,7 +484,7 @@ coverage: clean
 	xcrun llvm-profdata merge -sparse $(BUILD_DIR_COV)/*.profraw -o $(BUILD_DIR_COV)/coverage.profdata
 	@echo "Exporting lcov..."
 	@COV_MAIN=$(BUILD_DIR_COV)/test_tools; \
-	COV_OBJS="$(BUILD_DIR_COV)/test_wrapper $(BUILD_DIR_COV)/test_tunnel_config $(BUILD_DIR_COV)/test_error_handling $(BUILD_DIR_COV)/test_frpc_bindings_api $(BUILD_DIR_COV)/test_yamux_unit $(BUILD_DIR_COV)/test_frpc_stcp_unit $(BUILD_DIR_COV)/test_frpc_core_api $(BUILD_DIR_COV)/yamux_basic_test $(BUILD_DIR_COV)/yamux_protocol_test $(BUILD_DIR_COV)/yamux_interop_test $(BUILD_DIR_COV)/frpc_test"; \
+	COV_OBJS="$(BUILD_DIR_COV)/test_wrapper $(BUILD_DIR_COV)/test_tunnel_config $(BUILD_DIR_COV)/test_error_handling $(BUILD_DIR_COV)/test_frpc_bindings_api $(BUILD_DIR_COV)/test_frpc_stcp_unit $(BUILD_DIR_COV)/test_frpc_core_api $(BUILD_DIR_COV)/frpc_test"; \
 	xcrun llvm-cov export $$COV_MAIN $$(for o in $$COV_OBJS; do echo --object=$$o; done) \
 		-instr-profile=$(BUILD_DIR_COV)/coverage.profdata -format=lcov > $(BUILD_DIR_COV)/coverage.info
 	@python3 tests/coverage_check.py $(BUILD_DIR_COV)/coverage.info 80
@@ -543,8 +510,8 @@ p3-node: bindings-shared frps-build
 p3: p3-python p3-node p3-rust
 
 .PHONY: all install clean test c-test cmd-test \
-	tools-test wrapper-test config-test error-test bindings-api-test yamux-unit-test stcp-unit-test frpc-core-test crypto-test edge-case-test \
-	yamux-test frpc-test cmd-coverage coverage \
+	tools-test wrapper-test config-test error-test bindings-api-test stcp-unit-test frpc-core-test crypto-test edge-case-test \
+	frpc-test cmd-coverage coverage \
 	bindings-shared rust-e2e-test bindings-test test-bindings \
 	frps-build python-e2e-test nodejs-e2e-test e2e-test e2e \
 	python-e2e-frps e2e-frps \

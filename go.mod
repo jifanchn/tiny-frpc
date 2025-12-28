@@ -4,13 +4,13 @@ go 1.23.0
 
 toolchain go1.24.3
 
-// NOTE: We intentionally do not require github.com/fatedier/yamux directly.
-// require github.com/fatedier/yamux v0.0.0-20221031155914-a8b47c1ff9c4
+// NOTE: The C implementation (tiny-frpc) does NOT use Yamux multiplexing.
+// It only supports Direct TCP mode (tcp_mux=false).
+// However, yamux is still required as a dependency of FRP for the Go-based tests.
 
 require github.com/fatedier/frp v0.62.1
 
-// Require hashicorp/yamux, then pin it to our checked-out submodule via `replace`.
-// (Upstream FRP uses hashicorp/yamux as the module path; fatedier/yamux is a fork that keeps the same module path.)
+// Require hashicorp/yamux as FRP's dependency (used in Go tests only, not in C code).
 require github.com/hashicorp/yamux v0.1.1
 
 // To avoid module-vs-submodule drift, pin modules to the `third-party/` submodule sources.

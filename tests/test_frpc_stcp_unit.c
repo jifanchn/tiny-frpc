@@ -12,10 +12,6 @@
 
 #include "../tiny-frpc/include/frpc.h"
 #include "../tiny-frpc/include/frpc-stcp.h"
-#include "../tiny-frpc/include/yamux.h"
-
-// We use yamux_serialize_frame_header from yamux.c (not declared in yamux.h)
-void yamux_serialize_frame_header(const yamux_frame_header_t* local_header, uint8_t* buffer);
 
 // Simple assertion macro
 #define TEST_ASSERT(cond, msg) \
@@ -213,19 +209,10 @@ static void on_conn(void* user_ctx, int connected, int error_code) {
     else st->on_conn_down++;
 }
 
-__attribute__((unused))
-static void build_frame(uint8_t* out, yamux_frame_header_t* h, const uint8_t* payload, size_t payload_len) {
-    yamux_serialize_frame_header(h, out);
-    if (payload_len > 0 && payload) {
-        memcpy(out + YAMUX_FRAME_HEADER_SIZE, payload, payload_len);
-    }
-}
-
 static int test_stcp_server_receive_paths(void) {
     printf("\n=== Testing frpc-stcp server receive paths ===\n");
 
     // NOTE: frpc_stcp_server_register requires encrypted connection to frps.
-    // This test focuses on Yamux frame processing, not the full registration flow.
     // Full registration is tested in cmd/frpc_test with real frps.
     // We don't start mock_frps since we're not connecting to it.
 
@@ -260,16 +247,12 @@ static int test_stcp_server_receive_paths(void) {
     TEST_ASSERT_EQ(0, frpc_stcp_proxy_start(p), "frpc_stcp_proxy_start(server) should succeed");
     // Skip frpc_stcp_server_register - requires encrypted connection which mock_frps doesn't support
     // Registration is tested in cmd/frpc_test with real frps
-    
-    // NOTE: Without frpc_stcp_server_register, no yamux session is created.
-    // So frpc_stcp_receive will pass data directly to on_data callback.
-    // Yamux frame processing is tested separately in test_yamux_unit.c
     // Full STCP integration is tested in cmd/frpc_test with real frps.
     
-    // Test receive path without yamux (data goes directly to on_data callback)
+    // Test receive path (data goes directly to on_data callback in Direct TCP mode)
     const uint8_t test_data[] = "hello";
     int r = frpc_stcp_receive(p, test_data, sizeof(test_data) - 1);
-    TEST_ASSERT(r >= 0, "frpc_stcp_receive should succeed without yamux");
+    TEST_ASSERT(r >= 0, "frpc_stcp_receive should succeed in direct TCP mode");
     TEST_ASSERT(st.on_data_calls >= 1, "on_data callback should be invoked");
 
     // Exercise send error paths

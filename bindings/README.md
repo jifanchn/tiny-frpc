@@ -40,12 +40,15 @@ make bindings-shared
 
 ```bash
 # Test individual language bindings
-make python-bindings-test
-make nodejs-bindings-test
-make rust-bindings-test
+make python-e2e-test
+make nodejs-e2e-test
+make rust-e2e-test
 
-# Run multi-language integration tests
-make bindings-test
+# Run all E2E tests
+make e2e
+
+# Run P3 (Three-Process) tests with real FRPS
+make p3
 ```
 
 ## Usage Examples

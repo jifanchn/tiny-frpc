@@ -86,7 +86,7 @@ make demo-stcp-stress
 
 - `-v` : Show connection info
 - `-vv` : Show message info  
-- `-vvv` : Show all packets (Yamux frames, payloads)
+- `-vvv` : Show all packets (raw data, payloads)
 - `--json` : Output final stats as JSON (for automation)
 - `--duration N` : Test duration in seconds (default: 30)
 - `--interval N` : Message interval in ms (default: 100)

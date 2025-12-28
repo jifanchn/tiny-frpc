@@ -11,16 +11,18 @@
 - 🔌 **Minimal dependencies** – pure C core, no external runtime required
 - 📦 **Portable** – runs on embedded systems, Linux, and macOS
 - 🔐 **STCP support** – Secret TCP with shared-key authentication
-- 🔄 **Yamux multiplexing** – full protocol implementation
+- 🔒 **AES-128-CFB encryption** – full encryption support after login
 - 🌐 **Multi-language bindings** – Python, Node.js, Rust, Go (CGO)
 - ✅ **Protocol alignment** – validated against upstream Go implementations
+
+> **Note**: This implementation uses **Direct TCP mode** only (`tcp_mux=false`). Yamux multiplexing is not supported.
 
 ## 📁 Repository Layout
 
 ```
 tiny-frpc/
 ├── include/              # Public C headers
-├── source/               # C implementation (yamux, frpc, tools)
+├── source/               # C implementation (frpc, crypto, tools)
 └── *.md                  # Protocol documentation
 
 wrapper/linux/            # POSIX wrapper layer (portable I/O)
@@ -36,7 +38,7 @@ demo/stcp/                # STCP demo applications
 
 third-party/
 ├── frp/                  # Upstream FRP (git submodule)
-└── yamux/                # Upstream Yamux (git submodule)
+└── yamux/                # Upstream Yamux (git submodule, FRP dependency only)
 ```
 
 ## 🚀 Quick Start
@@ -78,7 +80,7 @@ make p3
 | Library                | Description                                      |
 |------------------------|--------------------------------------------------|
 | `libtools.a`           | Utilities (byte order, time, MD5)                |
-| `libyamux.a`           | Yamux protocol implementation                    |
+| `libcrypto.a`          | AES-128-CFB encryption implementation            |
 | `libfrpc.a`            | FRP client core + STCP                           |
 | `libwrapper.a`         | POSIX wrapper layer                              |
 | `libfrpc-bindings.a`   | Simplified API for language bindings             |
@@ -92,7 +94,6 @@ make p3
 | `make test`          | Run C unit tests + CGO alignment tests           |
 | `make test-bindings` | Run Python + Node.js + Rust binding tests        |
 | `make p3`            | Run P3 tests (Real FRPS + Multiple Visitors)     |
-| `make yamux-test`    | Run Yamux CGO alignment tests                    |
 | `make frpc-test`     | Run FRP/STCP CGO tests                           |
 | `make edge-case-test`| Run C edge case tests                            |
 | `make demo`          | Build and run STCP demo                          |
@@ -171,17 +172,18 @@ TINY_FRPC_VERBOSE=1 make test   # Enable C-side diagnostics
 
 | Stage | Description                        | Status      |
 |-------|------------------------------------|-------------|
-| 1     | Yamux implementation + CGO tests   | ✅ Complete |
-| 2     | FRP STCP (Visitor + Server)        | ✅ Complete |
-| 3     | POSIX wrapper layer                | ✅ Complete |
-| 4     | Full FRP integration (TCPMux)      | ✅ Complete |
+| 1     | FRP STCP (Visitor + Server)        | ✅ Complete |
+| 2     | POSIX wrapper layer                | ✅ Complete |
+| 3     | AES-128-CFB Encryption             | ✅ Complete |
+| 4     | Multi-language bindings            | ✅ Complete |
+
+> **Note**: TCPMux (Yamux multiplexing) is **not supported**. This implementation only supports Direct TCP mode (`tcp_mux=false`).
 
 ## 📖 Documentation
 
 - [`tiny-frpc/FRP-STCP.md`](tiny-frpc/FRP-STCP.md) – STCP protocol notes
 - [`tiny-frpc/LOGIC.md`](tiny-frpc/LOGIC.md) – Architecture logic and flow
-- [`tiny-frpc/YAMUX.md`](tiny-frpc/YAMUX.md) – Yamux protocol notes
-- [`tiny-frpc/STAGE.md`](tiny-frpc/STAGE.md) – Project milestones
+- [`tiny-frpc/DESIGN.md`](tiny-frpc/DESIGN.md) – Design document
 - [`bindings/README.md`](bindings/README.md) – Language bindings guide
 
 ## 📝 License
