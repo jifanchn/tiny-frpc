@@ -287,7 +287,13 @@ $(BUILD_DIR)/test_crypto: tests/test_crypto.c $(CRYPTO_LIB) $(WRAPPER_LIB) | $(B
 crypto-test: $(BUILD_DIR)/test_crypto
 	$(RUN_ENV) $(BUILD_DIR)/test_crypto
 
-c-test: all tools-test wrapper-test yamux-unit-test config-test error-test bindings-api-test stcp-unit-test frpc-core-test crypto-test
+$(BUILD_DIR)/test_edge_cases: tests/test_edge_cases.c $(FRPC_LIB) $(CRYPTO_LIB) $(TOOLS_LIB) $(YAMUX_LIB) $(WRAPPER_LIB) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -o $@ $< $(FRPC_LIB) $(CRYPTO_LIB) $(TOOLS_LIB) $(YAMUX_LIB) $(WRAPPER_LIB) -pthread $(LDFLAGS)
+
+edge-case-test: $(BUILD_DIR)/test_edge_cases
+	$(RUN_ENV) $(BUILD_DIR)/test_edge_cases
+
+c-test: all tools-test wrapper-test yamux-unit-test config-test error-test bindings-api-test stcp-unit-test frpc-core-test crypto-test edge-case-test
 
 # ------------------------
 # cmd/ tests (CGO: Go <-> C alignment)
@@ -532,7 +538,7 @@ p3-node: bindings-shared frps-build
 p3: p3-python
 
 .PHONY: all install clean test c-test cmd-test \
-	tools-test wrapper-test config-test error-test bindings-api-test yamux-unit-test stcp-unit-test frpc-core-test crypto-test \
+	tools-test wrapper-test config-test error-test bindings-api-test yamux-unit-test stcp-unit-test frpc-core-test crypto-test edge-case-test \
 	yamux-test frpc-test cmd-coverage coverage \
 	bindings-shared rust-e2e-test bindings-test test-bindings \
 	frps-build python-e2e-test nodejs-e2e-test e2e-test e2e \

@@ -68,6 +68,9 @@ make test
 
 # Run language bindings tests
 make test-bindings
+
+# Run P3 (Three-Process) tests with real FRPS
+make p3
 ```
 
 ## 📚 Built Libraries
@@ -88,8 +91,10 @@ make test-bindings
 | `make all`           | Build all C static libraries                     |
 | `make test`          | Run C unit tests + CGO alignment tests           |
 | `make test-bindings` | Run Python + Node.js + Rust binding tests        |
+| `make p3`            | Run P3 tests (Real FRPS + Multiple Visitors)     |
 | `make yamux-test`    | Run Yamux CGO alignment tests                    |
 | `make frpc-test`     | Run FRP/STCP CGO tests                           |
+| `make edge-case-test`| Run C edge case tests                            |
 | `make demo`          | Build and run STCP demo                          |
 | `make coverage`      | Generate code coverage report                    |
 | `make clean`         | Remove build outputs                             |

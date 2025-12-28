@@ -78,7 +78,7 @@ Result: `md5(token + strconv.FormatInt(timestamp, 10))` in lowercase hex (32 cha
 
 In this repository, the equivalent helper is exposed as `tools_get_auth_key()` in `tiny-frpc/include/tools.h`.
 
-## Connection Flow Diagram
+## Connection Flow Diagram (Real FRPS)
 
 ```
 ┌─────────────┐                     ┌─────────┐                    ┌─────────────┐
@@ -98,32 +98,27 @@ In this repository, the equivalent helper is exposed as `tools_get_auth_key()` i
        │                                 │←─── Login ─────────────────────│
        │                                 │──── LoginResp ────────────────→│
        │                                 │                                │
-       │                                 │←─── TCP Connect (new) ─────────│
+       │                                 │←─── TCP Connect (Visitor) ─────│
        │                                 │←─── NewVisitorConn ────────────│
        │                                 │                                │
-       │                                 │ [Verify sign_key matches sk]   │
+       │←─── ReqWorkConn ────────────────│ [Verify sign_key matches sk]   │
        │                                 │                                │
+       │──── TCP Connect (Work) ────────→│                                │
+       │──── NewWorkConn ───────────────→│                                │
+       │←─── StartWorkConn ──────────────│                                │
        │                                 │──── NewVisitorConnResp ───────→│
        │                                 │                                │
        │←─── [Data relay] ──────────────→│←─────── [Data relay] ─────────→│
        │                                 │                                │
 ```
 
-## TCPMux / "invalid protocol version" Note
+## Work Connection (Server Side)
 
-Upstream `frps` enables `Transport.TCPMux=true` by default, which means the control connection is treated as a Yamux mux session.
-If the client does not speak the expected mux protocol on that connection, frps may log errors like:
-
-- `accept new mux stream error: invalid protocol version`
-
-For staged bring-up, `cmd/frpc_test` may temporarily disable TCPMux in the embedded frps config. The long-term goal is strict alignment with TCPMux enabled.
-
-## Upstream Files Worth Reading
-
-- `third-party/frp/client/visitor/stcp.go` - STCP visitor implementation
-- `third-party/frp/server/visitor.go` - Server-side visitor handling
-- `third-party/frp/pkg/msg/msg.go` - Message schema definitions
-- `third-party/frp/pkg/util/util/util.go` - `GetAuthKey` implementation
+When a Visitor connects, FRPS sends a `ReqWorkConn` message to the Server's control connection. The Server must:
+1. Establish a new TCP connection to FRPS.
+2. Send `NewWorkConn` message (containing run_id, privilege_key, timestamp).
+3. Receive `StartWorkConn` response.
+4. Use this connection for data transfer.
 
 ## tiny-frpc Implementation Notes
 
@@ -139,24 +134,28 @@ The C API for STCP is defined in `tiny-frpc/include/frpc-stcp.h`:
 
 ### Data Plane
 
-After the FRP control handshake, data flows through Yamux:
+Data transfer mode depends on `tcpMux` configuration:
 
-1. Visitor opens a Yamux stream after `NewVisitorConnResp`
-2. Server accepts incoming Yamux streams from work connections
-3. `frpc_stcp_send()` writes via `yamux_stream_write()`
-4. `frpc_stcp_receive()` feeds bytes to `yamux_session_receive()`
+1. **tcpMux = true (Default)**:
+   - Uses Yamux multiplexing over a single connection.
+   
+2. **tcpMux = false (Direct Mode)**:
+   - Visitor uses the `visitorConn` directly for raw data.
+   - Server uses the `workConn` directly for raw data.
+   - `tiny-frpc` currently prioritizes this mode for compatibility with real FRPS setups.
 
 ### Stream Lifecycle
 
-- For **visitor**: after `NewVisitorConnResp` success, immediately open a Yamux stream and send data.
-- For **server**: wait for incoming Yamux stream via `on_new_stream` callback, then echo/process data.
+- For **visitor**: after `NewVisitorConnResp` success, immediately send data on the visitor connection (or open Yamux stream if mux enabled).
+- For **server**: 
+  - Poll control connection for `ReqWorkConn`.
+  - Establish work connection.
+  - Poll work connection for incoming data.
 
 ### Key Implementation Detail
 
-STCP data send is gated by **Yamux stream existence** (`active_stream_id != 0`), not by the `is_connected` flag:
-
-- Server-side: When accepting a new stream, the server does **not** receive an ACK (it sends the ACK to the client).
-- Therefore, sending data should be gated by stream existence rather than waiting for an "established" callback on the server side.
+- **Work Connection Handling**: The server maintains a `work_conn_fd` separate from the control `socket_fd`.
+- **Direct TCP Support**: `frpc_stcp_send` automatically detects if Yamux is active. If not, it sends raw data on `visitor_fd` (visitor) or `work_conn_fd` (server).
 
 ### Current Status
 

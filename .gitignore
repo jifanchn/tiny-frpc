@@ -25,4 +25,5 @@ bindings/nodejs/build/
 bindings/nodejs/node_modules/
 bindings/nodejs/*.node
 bindings/rust/target/
-bindings/python/__pycache__/release/
+**/__pycache__/
+*.py[cod]
