@@ -277,7 +277,8 @@ static int test_file_descriptor_limits(void) {
            (unsigned long)lim.rlim_cur, (unsigned long)lim.rlim_max);
 
     // Try to use many file descriptors
-    int* fds = malloc(sizeof(int) * 100);
+    // We open socket pairs, so we need 2x ints
+    int* fds = malloc(sizeof(int) * 100 * 2);
     if (!fds) {
         printf("SKIP: Cannot allocate memory\n");
         return 0;
