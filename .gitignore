@@ -25,5 +25,9 @@ bindings/nodejs/build/
 bindings/nodejs/node_modules/
 bindings/nodejs/*.node
 bindings/rust/target/
+**/target/
 **/__pycache__/
 *.py[cod]
+*.log
+frps.toml
+package-lock.json

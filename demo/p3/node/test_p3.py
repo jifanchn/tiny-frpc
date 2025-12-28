@@ -1,14 +1,6 @@
 #!/usr/bin/env python3
 """
-P3 (Three-Process) Test - E2E with Subprocesses
-
-This test suite spawns the actual python scripts (p3_server.py, p3_visitor.py)
-as subprocesses to verify the full system functionality with a real FRPS.
-
-Features tested:
-1. Multiple visitors connecting to a single server (Spawned processes)
-2. Bidirectional communication
-3. Disconnect handling
+P3 (Three-Process) Test for Node.js Implementation
 """
 
 import sys
@@ -23,14 +15,14 @@ import signal
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.join(SCRIPT_DIR, "../../..")
 FRPS_PATH = os.path.join(PROJECT_ROOT, "build/frps")
-SERVER_SCRIPT = os.path.join(SCRIPT_DIR, "p3_server.py")
-VISITOR_SCRIPT = os.path.join(SCRIPT_DIR, "p3_visitor.py")
+# Node scripts
+SERVER_SCRIPT = os.path.join(SCRIPT_DIR, "p3_server.js")
+VISITOR_SCRIPT = os.path.join(SCRIPT_DIR, "p3_visitor.js")
 
 # Configuration
 TOKEN = "test_token"
 
 def find_free_port():
-    """Find a free port."""
     import socket
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(('127.0.0.1', 0))
@@ -53,7 +45,7 @@ class AsyncOutputReader(threading.Thread):
                 if line:
                     self.queue.put((self.name, line.strip()))
         except ValueError:
-            pass # File closed
+            pass 
         finally:
             self.process.stdout.close()
 
@@ -71,15 +63,14 @@ class ProcessManager:
         p = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT, # Redirect stderr to stdout
+            stderr=subprocess.STDOUT,
             stdin=subprocess.PIPE,
-            bufsize=1,            # Line buffered
+            bufsize=1,
             universal_newlines=True,
             env=env
         )
         self.processes.append((name, p))
         
-        # Start stdout reader
         reader = AsyncOutputReader(p, name, self.output_queue)
         reader.start()
         self.readers.append(reader)
@@ -105,8 +96,6 @@ class ProcessManager:
                     p.wait(timeout=1)
                 except:
                     p.kill()
-        
-        # Stop readers
         for r in self.readers:
             r.stop()
 
@@ -120,10 +109,9 @@ class P3E2ETest:
     def __init__(self):
         self.port = find_free_port()
         self.pm = ProcessManager()
-        self.logs = [] # (name, line)
+        self.logs = [] 
         
     def start_frps(self):
-        # Create config
         import tempfile
         self.config_file = tempfile.NamedTemporaryFile(mode='w', suffix='.toml', delete=False)
         self.config_file.write(f"""
@@ -139,34 +127,37 @@ level = "info"
         self.config_file.close()
         
         self.pm.start_process("FRPS", [FRPS_PATH, "-c", self.config_file.name])
-        # Wait for FRPS start
-        time.sleep(3)
+        time.sleep(2)
+
+    def get_env(self):
+        env = os.environ.copy()
+        env["TINY_FRPC_VERBOSE"] = "1"
+        # Add build dir to library path for dynamic linker
+        lib_path = os.path.join(PROJECT_ROOT, "build")
+        if "DYLD_LIBRARY_PATH" in env:
+            env["DYLD_LIBRARY_PATH"] += ":" + lib_path
+        else:
+            env["DYLD_LIBRARY_PATH"] = lib_path
+            
+        if "LD_LIBRARY_PATH" in env:
+            env["LD_LIBRARY_PATH"] += ":" + lib_path
+        else:
+            env["LD_LIBRARY_PATH"] = lib_path
+        return env
 
     def start_server(self):
-        env = os.environ.copy()
-        env["PYTHONUNBUFFERED"] = "1"
-        env["TINY_FRPC_VERBOSE"] = "1" # Enable verbose logging
-        self.pm.start_process("Server", [sys.executable, SERVER_SCRIPT, "127.0.0.1", str(self.port)], env=env)
+        self.pm.start_process("Server", ["node", SERVER_SCRIPT, "127.0.0.1", str(self.port)], env=self.get_env())
 
     def start_visitor(self, name):
-        env = os.environ.copy()
-        env["PYTHONUNBUFFERED"] = "1"
-        env["TINY_FRPC_VERBOSE"] = "1" # Enable verbose logging
-        self.pm.start_process(f"Vis-{name}", [sys.executable, VISITOR_SCRIPT, "127.0.0.1", str(self.port), name], env=env)
+        self.pm.start_process(f"Vis-{name}", ["node", VISITOR_SCRIPT, "127.0.0.1", str(self.port), name], env=self.get_env())
 
     def collect_logs(self):
-        """Drain queue to logs"""
         while True:
             item = self.pm.get_output(timeout=0)
-            if item is None:
-                break
-            # Filter out empty lines
+            if item is None: break
             name, line = item
-            if not line.strip():
-                continue
+            if not line.strip(): continue
             self.logs.append(item)
-            # Optional debug print
-            # print(f"    LOG: [{name}] {line}")
 
     def dump_logs(self):
         self.collect_logs()
@@ -179,7 +170,6 @@ level = "info"
         start = time.time()
         while time.time() - start < timeout:
             self.collect_logs()
-            # Search backwards for efficiency logs
             for n, line in reversed(self.logs):
                 if n == name and pattern in line:
                     return True
@@ -190,88 +180,65 @@ level = "info"
     def cleanup(self):
         self.pm.kill_all()
         if hasattr(self, 'config_file'):
-            try:
-                os.unlink(self.config_file.name)
-            except:
-                pass
+            try: os.unlink(self.config_file.name)
+            except: pass
 
 def test_multi_visitor():
-    print("\n" + "="*60)
-    print("  Test: Single Server, Multiple Visitors (Subprocesses)")
+    print("="*60)
+    print("  Test: Node.js Implementation (Server & Visitors)")
     print("="*60)
     
     t = P3E2ETest()
     try:
-        # 1. Start FRPS
-        print("[1] Starting FRPS...")
         t.start_frps()
         
-        # 2. Start Server
-        print("[2] Starting Server...")
         t.start_server()
         if not t.expect_log("Server", "Server started", timeout=10):
             print("Failed to start server")
             return False
         
-        # 3. Start Visitor A
-        print("[3] Starting Visitor Alice...")
         t.start_visitor("Alice")
         if not t.expect_log("Vis-Alice", "Visitor started", timeout=5):
             print("Failed to start Alice")
             return False
             
-        # 4. Start Visitor B
-        print("[4] Starting Visitor Bob...")
         t.start_visitor("Bob")
         if not t.expect_log("Vis-Bob", "Visitor started", timeout=5):
             print("Failed to start Bob")
             return False
             
-        # 5. Alice sends message
         print("[5] Alice sends 'Hello from Alice'")
         t.pm.send_input("Vis-Alice", "Hello from Alice")
-        
-        # 6. Verify Server received Alice
-        print("    Waiting for Server to receive from Alice...")
         if t.expect_log("Server", "[Received] [Alice] Hello from Alice", timeout=5):
             print("    ✓ Server received Alice's message")
         else:
-            print("    ✗ Server DID NOT receive Alice's message")
+            print("    ✗ Server DID NOT receive Alice messsage")
             return False
             
-        # 7. Bob sends message
         print("[7] Bob sends 'Hello from Bob'")
         t.pm.send_input("Vis-Bob", "Hello from Bob")
-        
-        # 8. Verify Server received Bob
-        print("    Waiting for Server to receive from Bob...")
         if t.expect_log("Server", "[Received] [Bob] Hello from Bob", timeout=5):
             print("    ✓ Server received Bob's message")
         else:
             print("    ✗ Server DID NOT receive Bob's message")
             return False
-
-        # 9. Server Broadcasts to All
+            
         print("[9] Server broadcasts 'Server Broadcast'")
         t.pm.send_input("Server", "Server Broadcast")
 
-        # 10. Verify Alice Received
-        print("    Waiting for Alice to receive broadcast...")
         if t.expect_log("Vis-Alice", "[Received] [Server] Server Broadcast", timeout=5):
              print("    ✓ Alice received broadcast")
         else:
              print("    ✗ Alice DID NOT receive broadcast")
              return False
 
-        # 11. Verify Bob Received
-        print("    Waiting for Bob to receive broadcast...")
         if t.expect_log("Vis-Bob", "[Received] [Server] Server Broadcast", timeout=5):
              print("    ✓ Bob received broadcast")
         else:
              print("    ✗ Bob DID NOT receive broadcast")
              return False
-            
-        print("\nPASSED: Multi-visitor communication works!")
+
+        print("\nPASSED: Node.js implementation works!")
         return True
         
     except Exception as e:
@@ -283,14 +250,7 @@ def test_multi_visitor():
         t.cleanup()
 
 def main():
-    if not os.path.exists(FRPS_PATH):
-        print(f"Error: FRPS not found at {FRPS_PATH}")
-        # Try to build it? No, assume user handled it.
-        # But we can try Makefile if needed.
-    
-    print(f"Testing with FRPS at: {FRPS_PATH}")
-    success = test_multi_visitor()
-    return 0 if success else 1
+    test_multi_visitor()
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

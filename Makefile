@@ -530,12 +530,17 @@ p3-python: bindings-shared frps-build
 	cd demo/p3/python && python3 -B test_p3.py
 
 p3-rust: bindings-shared frps-build
-	@echo "Rust P3 tests not yet implemented"
+	cd demo/p3/rust && cargo build
+	cd demo/p3/rust && python3 -B test_p3.py
 
 p3-node: bindings-shared frps-build
-	@echo "Node.js P3 tests not yet implemented"
+	# Ensure node addon is built
+	cd bindings/nodejs && $(NODE_GYP_RUN) rebuild
+	@mkdir -p bindings/nodejs/build
+	@cp -f $(BINDINGS_SHLIB) bindings/nodejs/build/libfrpc-bindings.so
+	cd demo/p3/node && python3 -B test_p3.py
 
-p3: p3-python
+p3: p3-python p3-node p3-rust
 
 .PHONY: all install clean test c-test cmd-test \
 	tools-test wrapper-test config-test error-test bindings-api-test yamux-unit-test stcp-unit-test frpc-core-test crypto-test edge-case-test \

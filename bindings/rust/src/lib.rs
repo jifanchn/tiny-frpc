@@ -151,6 +151,7 @@ extern "C" {
     fn frpc_stop_tunnel(tunnel: *mut c_void) -> c_int;
     fn frpc_send_data(tunnel: *mut c_void, data: *const u8, len: size_t) -> c_int;
     fn frpc_process_events(handle: *mut c_void) -> c_int;
+    fn frpc_tunnel_tick(tunnel: *mut c_void) -> c_int;
     fn frpc_get_tunnel_stats(tunnel: *mut c_void, stats: *mut CTunnelStats) -> c_int;
     fn frpc_get_error_message(error_code: c_int) -> *const c_char;
     fn frpc_is_connected(handle: *mut c_void) -> bool;
@@ -435,6 +436,8 @@ pub struct FrpcTunnel {
     _config_strings: Vec<CString>,
     // IMPORTANT: callback user_data needs a stable address; Box<Arc<...>> keeps it stable and alive for the tunnel lifetime.
     _handler_box: Option<Box<Arc<dyn TunnelEventHandler>>>,
+    tick_thread: Mutex<Option<thread::JoinHandle<()>>>,
+    running: Arc<Mutex<bool>>,
 }
 
 unsafe impl Send for FrpcTunnel {}
@@ -531,6 +534,8 @@ impl FrpcTunnel {
             handle,
             _config_strings: config_strings,
             _handler_box: handler_box,
+            tick_thread: Mutex::new(None),
+            running: Arc::new(Mutex::new(false)),
         })
     }
     
@@ -540,11 +545,39 @@ impl FrpcTunnel {
         if ret != 0 {
             return Err(ErrorCode::from(ret).into());
         }
+
+        // Start ticking thread
+        let mut running = self.running.lock().unwrap();
+        if !*running {
+            *running = true;
+            let running_clone = Arc::clone(&self.running);
+            let handle = self.handle as usize; // Send raw pointer as usize
+
+            let thread = thread::spawn(move || {
+                while *running_clone.lock().unwrap() {
+                    unsafe {
+                        frpc_tunnel_tick(handle as *mut c_void);
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+            });
+            *self.tick_thread.lock().unwrap() = Some(thread);
+        }
+
         Ok(())
     }
     
     /// Stop the tunnel
     pub fn stop(&self) -> Result<()> {
+        // Stop thread first
+        {
+            let mut running = self.running.lock().unwrap();
+            *running = false;
+        }
+        if let Some(thread) = self.tick_thread.lock().unwrap().take() {
+            let _ = thread.join();
+        }
+
         let ret = unsafe { frpc_stop_tunnel(self.handle) };
         if ret != 0 {
             return Err(ErrorCode::from(ret).into());

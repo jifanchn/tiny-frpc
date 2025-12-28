@@ -1,0 +1,22 @@
+[package]
+name = "p3_demo"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+frpc = { package = "frpc-rs", path = "../../../bindings/rust" }
+anyhow = "1.0"
+# Using a simple input method since we don't want heavy dependencies
+# just std::io::stdin
+
+[[bin]]
+name = "p3_server"
+path = "src/bin/p3_server.rs"
+
+[[bin]]
+name = "p3_visitor"
+path = "src/bin/p3_visitor.rs"
+
+[[bin]]
+name = "test_p3"
+path = "src/bin/test_p3.rs"

@@ -113,6 +113,11 @@ class FRPCClient extends EventEmitter {
     this._eventTimer = setInterval(() => {
       try {
         native.processEvents(this._handle);
+        for (const t of this._tunnels.values()) {
+          if (t._handle) {
+             native.tunnelTick(t._handle);
+          }
+        }
       } catch (e) {
         this.emit('error', e);
       }
