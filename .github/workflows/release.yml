@@ -75,6 +75,10 @@ jobs:
           mkdir -p release/lib
           mkdir -p release/include
           mkdir -p release/demo
+          mkdir -p release/demo/p3/common
+          mkdir -p release/demo/p3/python
+          mkdir -p release/demo/p3/node
+          mkdir -p release/demo/p3/rust/src/bin
           mkdir -p release/bindings/python
           mkdir -p release/bindings/nodejs/build
           mkdir -p release/bindings/rust/src
@@ -129,6 +133,24 @@ jobs:
           cp build/libfrpc-bindings.so release/bindings/python/
           cp build/libfrpc-bindings.so release/bindings/nodejs/build/
           
+          # P3 Demo files
+          cp demo/p3/README.md release/demo/p3/
+          cp demo/p3/common/start_frps.sh release/demo/p3/common/
+          cp demo/p3/common/download_frps.sh release/demo/p3/common/
+          chmod +x release/demo/p3/common/*.sh
+          cp demo/p3/python/*.py release/demo/p3/python/
+          cp demo/p3/node/*.js release/demo/p3/node/
+          cp demo/p3/node/*.py release/demo/p3/node/ 2>/dev/null || true
+          cp demo/p3/rust/Cargo.toml release/demo/p3/rust/
+          cp demo/p3/rust/src/bin/*.rs release/demo/p3/rust/src/bin/
+          cp demo/p3/rust/test_p3.py release/demo/p3/rust/ 2>/dev/null || true
+          
+          # Copy shared lib and Python module to P3 demos for convenience
+          cp build/libfrpc-bindings.so release/demo/p3/python/
+          cp bindings/python/frpc_python.py release/demo/p3/python/
+          cp build/libfrpc-bindings.so release/demo/p3/node/
+          cp bindings/nodejs/frpc_node.js release/demo/p3/node/
+          
           # Package
           tar -czvf tiny-frpc-${{ matrix.platform }}.tar.gz -C release .
         shell: bash
@@ -178,6 +200,23 @@ jobs:
           cp build/libfrpc-bindings.dll release/bindings/python/ 2>/dev/null || true
           cp build/libfrpc-bindings.so release/bindings/nodejs/build/libfrpc-bindings.dll 2>/dev/null || \
           cp build/libfrpc-bindings.dll release/bindings/nodejs/build/ 2>/dev/null || true
+          
+          # P3 Demo files (Windows - create dirs first)
+          mkdir -p release/demo/p3/common release/demo/p3/python release/demo/p3/node release/demo/p3/rust/src/bin
+          cp demo/p3/README.md release/demo/p3/ 2>/dev/null || true
+          cp demo/p3/common/*.sh release/demo/p3/common/ 2>/dev/null || true
+          cp demo/p3/python/*.py release/demo/p3/python/ 2>/dev/null || true
+          cp demo/p3/node/*.js release/demo/p3/node/ 2>/dev/null || true
+          cp demo/p3/rust/Cargo.toml release/demo/p3/rust/ 2>/dev/null || true
+          cp demo/p3/rust/src/bin/*.rs release/demo/p3/rust/src/bin/ 2>/dev/null || true
+          
+          # Copy DLL and modules to P3 demos
+          cp build/libfrpc-bindings.so release/demo/p3/python/libfrpc-bindings.dll 2>/dev/null || \
+          cp build/libfrpc-bindings.dll release/demo/p3/python/ 2>/dev/null || true
+          cp bindings/python/frpc_python.py release/demo/p3/python/ 2>/dev/null || true
+          cp build/libfrpc-bindings.so release/demo/p3/node/libfrpc-bindings.dll 2>/dev/null || \
+          cp build/libfrpc-bindings.dll release/demo/p3/node/ 2>/dev/null || true
+          cp bindings/nodejs/frpc_node.js release/demo/p3/node/ 2>/dev/null || true
           
           # Package
           cd release && 7z a -tzip ../tiny-frpc-${{ matrix.platform }}.zip .
@@ -229,16 +268,50 @@ jobs:
             
             ```
             release/
-            ├── lib/                    # Static and shared libraries
-            │   ├── libfrpc-bindings.so # Shared library for bindings
-            │   └── *.a                 # Static libraries
-            ├── include/                # C headers
-            ├── demo/                   # Demo executables (Linux/macOS only)
-            └── bindings/               # Language bindings (ready to use)
-                ├── python/             # Contains libfrpc-bindings.so
-                ├── nodejs/             # Contains build/libfrpc-bindings.so
+            ├── lib/                         # Static and shared libraries
+            │   ├── libfrpc-bindings.so      # Shared library for bindings
+            │   └── *.a                      # Static libraries
+            ├── include/                     # C headers
+            ├── demo/                        
+            │   ├── demo_stcp_*              # C demo executables (Linux/macOS only)
+            │   └── p3/                      # P3 Multi-process demo (NEW!)
+            │       ├── README.md            # Complete usage guide
+            │       ├── common/              # FRPS download and start scripts
+            │       ├── python/              # Python server/visitor (contains .so)
+            │       ├── node/                # Node.js server/visitor
+            │       └── rust/                # Rust server/visitor
+            └── bindings/                    # Language bindings (ready to use)
+                ├── python/                  # Contains libfrpc-bindings.so
+                ├── nodejs/                  # Contains build/libfrpc-bindings.so
                 └── rust/
             ```
+            
+            ### Quick Start: P3 Demo
+            
+            The P3 (Three-Process) demo shows multi-process communication:
+            
+            ```bash
+            # Extract release
+            tar -xzf tiny-frpc-*.tar.gz
+            cd release
+            
+            # Download FRPS (auto-detects platform)
+            chmod +x demo/p3/common/download_frps.sh
+            ./demo/p3/common/download_frps.sh
+            
+            # Start FRPS in Terminal 1
+            ./demo/p3/common/start_frps.sh
+            
+            # Start Server in Terminal 2
+            python3 demo/p3/python/p3_server.py 127.0.0.1 7001
+            
+            # Start Visitor in Terminal 3
+            python3 demo/p3/python/p3_visitor.py 127.0.0.1 7001 Alice
+            
+            # Type messages to communicate!
+            ```
+            
+            See `demo/p3/README.md` for complete documentation.
             
             ### Compatible FRPS Server
             

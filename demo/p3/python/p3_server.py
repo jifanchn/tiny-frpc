@@ -4,8 +4,20 @@ import os
 import threading
 import time
 
-# Add bindings to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../../bindings/python'))
+# Find frpc_python module:
+# 1. First try current directory (for release package)
+# 2. Then try bindings/python (for development)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+# Release package: demo/p3/python contains libfrpc-bindings.so directly
+sys.path.insert(0, SCRIPT_DIR)
+# Development: ../../../bindings/python
+sys.path.insert(0, os.path.join(SCRIPT_DIR, '../../../bindings/python'))
+# Also set library path for current directory
+if sys.platform == 'darwin':
+    os.environ['DYLD_LIBRARY_PATH'] = SCRIPT_DIR + ':' + os.environ.get('DYLD_LIBRARY_PATH', '')
+else:
+    os.environ['LD_LIBRARY_PATH'] = SCRIPT_DIR + ':' + os.environ.get('LD_LIBRARY_PATH', '')
+
 from frpc_python import FRPCClient, TunnelType
 
 def on_data(data):
