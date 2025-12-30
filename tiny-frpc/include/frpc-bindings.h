@@ -4,7 +4,6 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
-#include <time.h>
 
 // Reuse core FRPC error codes to avoid duplicated enumerators.
 #include "frpc.h"
@@ -39,7 +38,7 @@ typedef struct {
     frpc_error_code_t code;
     char* message;
     char* context;
-    time_t timestamp;
+    uint64_t timestamp;
     uint32_t tunnel_id;
     char* protocol_name;
     char* file;

@@ -6,7 +6,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdarg.h>
-#include <time.h>
+#include "wrapper.h"
 
 // Internal structures
 typedef struct frpc_client_wrapper {
@@ -22,7 +22,7 @@ typedef struct frpc_tunnel_wrapper {
     frpc_tunnel_config_t config;
     frpc_tunnel_stats_t stats;
     bool active;
-    time_t created_time;
+    wrapped_time_t created_time;
 } frpc_tunnel_wrapper_t;
 
 // Global state
@@ -84,7 +84,7 @@ static void stcp_connection_callback(void* user_ctx, int connected, int error_co
         tunnel->active = false;
     }
     
-    tunnel->stats.last_activity_time = time(NULL);
+    tunnel->stats.last_activity_time = (uint64_t)wrapped_time(NULL);
     
     if (tunnel->config.connection_callback) {
         tunnel->config.connection_callback((frpc_tunnel_handle_t)tunnel, connected, error_code, tunnel->config.user_data);
@@ -270,7 +270,7 @@ void frpc_error_init(frpc_error_t* error) {
     
     memset(error, 0, sizeof(frpc_error_t));
     error->code = FRPC_SUCCESS;
-    error->timestamp = time(NULL);
+    error->timestamp = (uint64_t)wrapped_time(NULL);
 }
 
 void frpc_error_cleanup(frpc_error_t* error) {
@@ -295,7 +295,7 @@ void frpc_error_set(frpc_error_t* error, frpc_error_code_t code, const char* mes
     
     // Set new error data
     error->code = code;
-    error->timestamp = time(NULL);
+    error->timestamp = (uint64_t)wrapped_time(NULL);
     error->tunnel_id = tunnel_id;
     error->line = line;
     
@@ -513,7 +513,7 @@ frpc_tunnel_handle_t frpc_create_tunnel(frpc_handle_t handle, const frpc_tunnel_
     memset(tunnel, 0, sizeof(frpc_tunnel_wrapper_t));
     tunnel->client_wrapper = client_wrapper;
     tunnel->config = *config; // Copy configuration
-    tunnel->created_time = time(NULL);
+    tunnel->created_time = wrapped_time(NULL);
     
     // Duplicate string fields
     if (config->tunnel_name) {
@@ -608,7 +608,7 @@ int frpc_start_tunnel(frpc_tunnel_handle_t tunnel) {
     int ret = frpc_stcp_proxy_start(t->stcp_proxy);
     if (ret == 0) {
         t->active = true;
-        t->stats.last_activity_time = time(NULL);
+        t->stats.last_activity_time = (uint64_t)wrapped_time(NULL);
         internal_log(FRPC_LOG_INFO, "Started tunnel: %s", t->config.tunnel_name);
         
         // Additional setup based on tunnel type
@@ -652,7 +652,7 @@ int frpc_send_data(frpc_tunnel_handle_t tunnel, const uint8_t* data, size_t len)
     int ret = frpc_stcp_send(t->stcp_proxy, data, len);
     if (ret > 0) {
         t->stats.bytes_sent += ret;
-        t->stats.last_activity_time = time(NULL);
+        t->stats.last_activity_time = (uint64_t)wrapped_time(NULL);
     }
     
     return ret;
